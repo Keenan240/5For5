@@ -12,7 +12,7 @@ NBA playoff milestone parlay simulator. Strict 5/5 hit-rate discovery, adjustabl
 
 **Odds:** FanDuel player milestone odds require BDL GOAT tier. The app estimates odds from buffer when live props are unavailable.
 
-**Storage:** Local dev uses `.data/parlay_state.json`. On Vercel, connect KV (or Upstash Redis) and set `KV_REST_API_URL` / `KV_REST_API_TOKEN`.
+**Storage:** Local dev uses `.data/parlay_state.json`. On Vercel, add **Upstash Redis** (Storage tab) — auto-sets `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Check `/api/status` → `"storage": "redis"`.
 
 ## Daily use
 
@@ -30,5 +30,6 @@ Deploy to Vercel → open in Safari → Share → Add to Home Screen.
 ## Deploy (Vercel)
 
 1. Push to GitHub and import in Vercel
-2. Add env vars: `BALLDONTLIE_API_KEY`, `NBA_SEASON=2025`, KV credentials
+2. Storage → **Upstash Redis** → Connect to project (required for place/settle)
+3. Add env vars: `BALLDONTLIE_API_KEY`, `NBA_SEASON=2025` (Redis vars are auto-added)
 3. Add PWA icons: `public/icon-192.png` and `public/icon-512.png`

@@ -34,9 +34,10 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     console.error("Place parlay error:", err);
-    return Response.json(
-      { error: "Failed to place parlay. Check server logs." },
-      { status: 500 }
-    );
+    const message =
+      err instanceof Error
+        ? err.message
+        : "Failed to place parlay. Check server logs.";
+    return Response.json({ error: message }, { status: 500 });
   }
 }

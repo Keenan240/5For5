@@ -1,3 +1,4 @@
+import { Redis } from "@upstash/redis";
 import { promises as fs } from "fs";
 import path from "path";
 import type { ParlayState } from "./types";
@@ -28,24 +29,69 @@ async function writeLocal(state: ParlayState): Promise<void> {
   await fs.writeFile(localPath(), JSON.stringify(state, null, 2));
 }
 
-function hasVercelKvStorage(): boolean {
-  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+function redisRestConfig(): { url: string; token: string } | null {
+  const url =
+    process.env.UPSTASH_REDIS_REST_URL?.trim() ||
+    process.env.KV_REST_API_URL?.trim();
+  const token =
+    process.env.UPSTASH_REDIS_REST_TOKEN?.trim() ||
+    process.env.KV_REST_API_TOKEN?.trim();
+  if (url && token) return { url, token };
+  return null;
+}
+
+let redisClient: Redis | null | undefined;
+
+function getRedis(): Redis | null {
+  if (redisClient !== undefined) return redisClient;
+  const config = redisRestConfig();
+  if (!config) {
+    redisClient = null;
+    return null;
+  }
+  redisClient = new Redis(config);
+  return redisClient;
+}
+
+function onVercel(): boolean {
+  return Boolean(process.env.VERCEL);
+}
+
+export function storageMode(): "redis" | "local" | "none" {
+  if (getRedis()) return "redis";
+  if (onVercel()) return "none";
+  return "local";
+}
+
+export class StorageNotConfiguredError extends Error {
+  constructor() {
+    super(
+      "Database not connected. In Vercel → Storage, add Upstash Redis and redeploy (needs UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN)."
+    );
+    this.name = "StorageNotConfiguredError";
+  }
 }
 
 export async function getState(): Promise<ParlayState> {
-  if (hasVercelKvStorage()) {
-    const { kv } = await import("@vercel/kv");
-    const state = await kv.get<ParlayState>(KEY);
+  const redis = getRedis();
+  if (redis) {
+    const state = await redis.get<ParlayState>(KEY);
     return state ?? { ...DEFAULT_STATE };
+  }
+  if (onVercel()) {
+    return { ...DEFAULT_STATE };
   }
   return (await readLocal()) ?? { ...DEFAULT_STATE };
 }
 
 export async function setState(state: ParlayState): Promise<void> {
-  if (hasVercelKvStorage()) {
-    const { kv } = await import("@vercel/kv");
-    await kv.set(KEY, state);
+  const redis = getRedis();
+  if (redis) {
+    await redis.set(KEY, state);
     return;
+  }
+  if (onVercel()) {
+    throw new StorageNotConfiguredError();
   }
   await writeLocal(state);
 }

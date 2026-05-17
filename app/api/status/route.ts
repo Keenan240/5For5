@@ -1,4 +1,4 @@
-import { getState } from "@/lib/kv";
+import { getState, storageMode } from "@/lib/kv";
 import { getTonightSlate } from "@/lib/tonight";
 
 export async function GET() {
@@ -7,6 +7,7 @@ export async function GET() {
 
   return Response.json({
     ...state,
+    storage: storageMode(),
     qualifiedCount: null,
     sliderMax: 8,
     slate: {
