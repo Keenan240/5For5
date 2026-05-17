@@ -1,36 +1,34 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Parlay Tracker
 
-## Getting Started
+NBA playoff milestone parlay simulator. Strict 5/5 hit-rate discovery, adjustable 3–8 leg parlays, bankroll tracking.
 
-First, run the development server:
+## Setup
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. `npm install`
+2. Copy `.env.example` to `.env.local` and add optional `BALLDONTLIE_API_KEY`
+3. `npm run dev` → http://localhost:3000
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**Stats:** Uses BallDontLie when a key is set; otherwise falls back to stats.nba.com for playoff game logs.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**Odds:** FanDuel player milestone odds require BDL GOAT tier. The app estimates odds from buffer when live props are unavailable.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Storage:** Local dev uses `.data/parlay_state.json`. On Vercel, connect KV (or Upstash Redis) and set `KV_REST_API_URL` / `KV_REST_API_TOKEN`.
 
-## Learn More
+## Daily use
 
-To learn more about Next.js, take a look at the following resources:
+1. ~3pm: open the app — tonight's games and full team rosters load automatically (BallDontLie + NBA fallback)
+2. Set parlay leg slider (3–8), tap **Create Parlay**
+3. Enter legs manually on FanDuel
+4. After games: tap **Settle**
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+No manual player list needed. Uses Eastern Time for "tonight."
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## iPhone PWA
 
-## Deploy on Vercel
+Deploy to Vercel → open in Safari → Share → Add to Home Screen.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deploy (Vercel)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Push to GitHub and import in Vercel
+2. Add env vars: `BALLDONTLIE_API_KEY`, `NBA_SEASON=2025`, KV credentials
+3. Add PWA icons: `public/icon-192.png` and `public/icon-512.png`
