@@ -11,7 +11,7 @@ export const STAT_KEY: Record<StatCategory, keyof GameLog> = {
 
 export const LADDERS: Record<StatCategory, number[]> = {
   Points: [5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
-  Rebounds: [2, 4, 6, 8, 10, 12, 14, 16],
+  Rebounds: [4, 6, 8, 10, 12, 14, 16],
   Assists: [2, 4, 6, 8, 10, 12, 14],
   "3-Pointers": [1, 2, 3, 4, 5, 6, 7],
   Steals: [1, 2, 3, 4, 5],
