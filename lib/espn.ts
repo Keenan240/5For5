@@ -1,5 +1,5 @@
 import { fetchJson } from "./fetch";
-import { gameLogMatchesSlateDate } from "./dates";
+import { pickBestSlateGame } from "./dates";
 import type { GameLog } from "./types";
 
 const ESPN_SEARCH =
@@ -7,9 +7,10 @@ const ESPN_SEARCH =
 const ESPN_GAMELOG =
   "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes";
 
-function espnSeasonYear(): number {
+/** ESPN uses end-year; try both conventions for reliability. */
+export function espnSeasonCandidates(): number[] {
   const y = parseInt(process.env.NBA_SEASON || "2025", 10);
-  return y + 1;
+  return [...new Set([y + 1, y])];
 }
 
 function normalizeName(name: string): string {
@@ -75,20 +76,8 @@ type EspnGameLogResponse = {
   }[];
 };
 
-export async function getEspnGameLogs(
-  playerName: string,
-  maxGames = 20
-): Promise<GameLog[]> {
-  const athleteId = await getEspnAthleteId(playerName);
-  if (!athleteId) return [];
-
-  const season = espnSeasonYear();
-  const url = `${ESPN_GAMELOG}/${athleteId}/gamelog?season=${season}`;
-  const result = await fetchJson<EspnGameLogResponse>(url, undefined, 15_000);
-
-  if (!result.ok || !result.data) return [];
-
-  const { names, events, seasonTypes } = result.data;
+function parseEspnGamelogResponse(data: EspnGameLogResponse): GameLog[] {
+  const { names, events, seasonTypes } = data;
   const idx = {
     min: names.indexOf("minutes"),
     pts: names.indexOf("points"),
@@ -108,7 +97,7 @@ export async function getEspnGameLogs(
         if (!meta?.gameDate) continue;
         const s = e.stats;
         rows.push({
-          date: meta.gameDate.slice(0, 10),
+          date: meta.gameDate,
           opponent: st.displayName ?? "",
           pts: Number(s[idx.pts]) || 0,
           reb: Number(s[idx.reb]) || 0,
@@ -123,8 +112,45 @@ export async function getEspnGameLogs(
   }
 
   rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const recent = rows.slice(0, maxGames);
-  return recent.reverse();
+  return rows;
+}
+
+async function fetchEspnGameLogsForSeason(
+  athleteId: string,
+  season: number,
+  maxGames: number
+): Promise<GameLog[]> {
+  const url = `${ESPN_GAMELOG}/${athleteId}/gamelog?season=${season}`;
+  const result = await fetchJson<EspnGameLogResponse>(url, undefined, 15_000);
+  if (!result.ok || !result.data) return [];
+  const rows = parseEspnGamelogResponse(result.data);
+  return rows.slice(0, maxGames).reverse();
+}
+
+export async function getEspnGameLogs(
+  playerName: string,
+  maxGames = 30
+): Promise<GameLog[]> {
+  const athleteId = await getEspnAthleteId(playerName);
+  if (!athleteId) return [];
+
+  const seasons = espnSeasonCandidates();
+  const batches = await Promise.all(
+    seasons.map((s) => fetchEspnGameLogsForSeason(athleteId, s, maxGames))
+  );
+
+  const byKey = new Map<string, GameLog>();
+  for (const batch of batches) {
+    for (const g of batch) {
+      const key = `${g.date}|${g.opponent}|${g.pts}`;
+      if (!byKey.has(key)) byKey.set(key, g);
+    }
+  }
+
+  const merged = [...byKey.values()].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  );
+  return merged.slice(0, maxGames).reverse();
 }
 
 export async function getLast5GamesFromEspn(
@@ -145,15 +171,22 @@ export async function getLatestGameStatFromEspn(
   return { value, min: latest.min };
 }
 
+export async function findEspnGameOnSlate(
+  playerName: string,
+  slateYmd: string
+): Promise<{ game: GameLog; matchedYmd: string } | null> {
+  const logs = await getEspnGameLogs(playerName, 35);
+  return pickBestSlateGame(logs, slateYmd);
+}
+
 export async function getGameStatFromEspnForDate(
   playerName: string,
   statKey: keyof GameLog,
   slateYmd: string
-): Promise<{ value: number; min: number } | null> {
-  const logs = await getEspnGameLogs(playerName, 25);
-  const game = logs.find((g) => gameLogMatchesSlateDate(g.date, slateYmd));
-  if (!game) return null;
-  const value = game[statKey];
+): Promise<{ value: number; min: number; matchedYmd: string } | null> {
+  const hit = await findEspnGameOnSlate(playerName, slateYmd);
+  if (!hit) return null;
+  const value = hit.game[statKey];
   if (typeof value !== "number") return null;
-  return { value, min: game.min };
+  return { value, min: hit.game.min, matchedYmd: hit.matchedYmd };
 }

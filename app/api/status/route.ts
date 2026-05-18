@@ -34,6 +34,7 @@ export async function GET() {
           usingFallbackUnlock: settleLock.usingFallbackUnlock,
           isTodaysSlate: settleLock.isTodaysSlate,
           deferredAfterRevert: settleLock.deferredAfterRevert,
+          legsStats: settleLock.legsStats,
         }
       : null,
   });

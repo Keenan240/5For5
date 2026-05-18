@@ -4,6 +4,17 @@ export function getTodayEastern(): string {
   }).format(new Date());
 }
 
+export function addDaysYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0));
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Slate date ±1 day (late West Coast games / UTC log dates). */
+export function slateDateCandidates(slateYmd: string): string[] {
+  return [addDaysYmd(slateYmd, -1), slateYmd, addDaysYmd(slateYmd, 1)];
+}
+
 /** YYYY-MM-DD → "May 17, 2025" (calendar date, no timezone shift). */
 export function formatDisplayDate(ymd: string): string {
   const match = ymd.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -18,10 +29,15 @@ export function formatDisplayDate(ymd: string): string {
   }).format(date);
 }
 
-/** Normalize NBA / ESPN log dates to YYYY-MM-DD for comparison. */
+/** Normalize NBA / ESPN log dates to YYYY-MM-DD (Eastern). */
 export function logDateToYmd(logDate: string): string | null {
   const iso = logDate.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (iso) return iso[1];
+  if (iso) {
+    const utcNoon = new Date(`${iso[1]}T12:00:00Z`);
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+    }).format(utcNoon);
+  }
 
   const parsed = new Date(logDate);
   if (Number.isNaN(parsed.getTime())) return null;
@@ -36,5 +52,25 @@ export function gameLogMatchesSlateDate(
   slateYmd: string
 ): boolean {
   const ymd = logDateToYmd(logDate);
-  return ymd === slateYmd;
+  if (!ymd) return false;
+  return slateDateCandidates(slateYmd).includes(ymd);
+}
+
+export function pickBestSlateGame<T extends { date: string }>(
+  logs: T[],
+  slateYmd: string
+): { game: T; matchedYmd: string } | null {
+  let best: { game: T; matchedYmd: string; rank: number } | null = null;
+
+  for (const game of logs) {
+    const ymd = logDateToYmd(game.date);
+    if (!ymd || !slateDateCandidates(slateYmd).includes(ymd)) continue;
+
+    const rank = ymd === slateYmd ? 0 : 1;
+    if (!best || rank < best.rank) {
+      best = { game, matchedYmd: ymd, rank };
+    }
+  }
+
+  return best ? { game: best.game, matchedYmd: best.matchedYmd } : null;
 }

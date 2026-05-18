@@ -50,6 +50,15 @@ type SlateInfo = {
   rosterSource?: string;
 };
 
+type LegStatInfo = {
+  player: string;
+  ready: boolean;
+  source: string | null;
+  matchedDate: string | null;
+  pts: number | null;
+  error?: string;
+};
+
 type SettleLockInfo = {
   locked: boolean;
   lockReason: SettleLockReason;
@@ -61,6 +70,7 @@ type SettleLockInfo = {
   usingFallbackUnlock: boolean;
   isTodaysSlate: boolean;
   deferredAfterRevert?: boolean;
+  legsStats?: LegStatInfo[];
 };
 
 type StatusResponse = ParlayState & {
@@ -112,12 +122,18 @@ export default function Home() {
       raw.unlockAt != null
         ? Math.max(0, new Date(raw.unlockAt).getTime() - clockMs)
         : 0;
+    const waitingPlayers =
+      raw.legsStats
+        ?.filter((l) => !l.ready)
+        .map((l) => l.player) ?? [];
+
     return {
       ...raw,
       remainingMs:
         raw.lockReason === "waiting_games" || raw.lockReason === "deferred"
           ? timeRemainingMs
           : raw.remainingMs,
+      waitingPlayers,
     };
   }, [state?.settleLock, clockMs]);
 
@@ -872,6 +888,26 @@ export default function Home() {
           <p className="mb-3 text-xs leading-relaxed text-[var(--text-subtle)]">
             {settleLock ? settleLockHint(settleLock) : ""}
           </p>
+          {settleLock?.legsStats && settleLock.legsStats.length > 0 && (
+            <ul className="mb-3 space-y-1 text-[11px] text-[var(--text-muted)]">
+              {settleLock.legsStats.map((leg) => (
+                <li key={leg.player} className="flex justify-between gap-2">
+                  <span>{leg.player}</span>
+                  <span
+                    className={
+                      leg.ready ? "text-green-400" : "text-amber-400/90"
+                    }
+                  >
+                    {leg.ready
+                      ? `${leg.source ?? "?"} · ${leg.matchedDate}${leg.pts != null ? ` · ${leg.pts} pts` : ""}`
+                      : leg.error === "player_not_found"
+                        ? "not found in feed"
+                        : "no box score yet"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
           <PendingCard parlay={state.pending} />
         </section>
       )}

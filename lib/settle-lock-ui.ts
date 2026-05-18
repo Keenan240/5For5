@@ -14,6 +14,7 @@ export type SettleLockView = {
   isTodaysSlate: boolean;
   deferredAfterRevert?: boolean;
   remainingMs?: number;
+  waitingPlayers?: string[];
 };
 
 export function formatCountdown(remainingMs: number): string {
@@ -33,7 +34,10 @@ export function settleLockHint(lock: SettleLockView): string {
     return "Box scores are in — settle when FanDuel matches.";
   }
   if (lock.lockReason === "waiting_stats") {
-    return "Games are done — waiting for tonight's box scores in the stat feed (won't use yesterday's stats).";
+    const waiting = lock.waitingPlayers?.length
+      ? ` Still waiting on: ${lock.waitingPlayers.join(", ")}.`
+      : "";
+    return `Games are done — waiting for box scores in NBA/ESPN feeds (±1 day date match).${waiting}`;
   }
   return `Waiting for all games to finish — fallback unlock ${lock.unlockLabel}.`;
 }

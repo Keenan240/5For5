@@ -1,10 +1,14 @@
 import type { PendingParlay } from "./types";
+import { addDaysYmd } from "./dates";
 import { getSlateForDate, getTodayEastern } from "./tonight";
 import {
   clearSettleDeferredUntil,
   getSettleDeferredUntil,
 } from "./settle-timing";
-import { hasGameOnSlateDate, loadPlayerIdMap } from "./stats";
+import {
+  checkAllLegsStatsReady,
+  type SlateGameResolution,
+} from "./stats";
 
 const ET = "America/New_York";
 const UNLOCK_HOUR = 2;
@@ -16,11 +20,7 @@ export type SettleLockReason =
   | "waiting_stats"
   | "waiting_games";
 
-export function addDaysYmd(ymd: string, days: number): string {
-  const [y, m, d] = ymd.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0));
-  return dt.toISOString().slice(0, 10);
-}
+export { addDaysYmd };
 
 function getPartsInZone(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -95,17 +95,8 @@ export type SettleLockStatus = {
   allGamesFinal: boolean;
   usingFallbackUnlock: boolean;
   deferredAfterRevert: boolean;
+  legsStats: SlateGameResolution[];
 };
-
-async function checkStatsReady(pending: PendingParlay): Promise<boolean> {
-  const idMap = await loadPlayerIdMap();
-  const checks = await Promise.all(
-    pending.legs.map((leg) =>
-      hasGameOnSlateDate(leg.player, pending.date, idMap)
-    )
-  );
-  return checks.every(Boolean);
-}
 
 export async function getSettleLockStatus(
   pending: PendingParlay
@@ -116,7 +107,8 @@ export async function getSettleLockStatus(
 
   const deferredUntil = await getSettleDeferredUntil(pending.date);
   if (deferredUntil && now < deferredUntil.getTime()) {
-    const statsReady = await checkStatsReady(pending);
+    const { ready: statsReady, legs: legsStats } =
+      await checkAllLegsStatsReady(pending.legs, pending.date);
     const remainingMs = deferredUntil.getTime() - now;
     return {
       locked: true,
@@ -129,10 +121,12 @@ export async function getSettleLockStatus(
       allGamesFinal: false,
       usingFallbackUnlock: true,
       deferredAfterRevert: true,
+      legsStats,
     };
   }
 
-  const statsReady = await checkStatsReady(pending);
+  const { ready: statsReady, legs: legsStats } =
+    await checkAllLegsStatsReady(pending.legs, pending.date);
 
   if (statsReady) {
     return {
@@ -146,6 +140,7 @@ export async function getSettleLockStatus(
       allGamesFinal: true,
       usingFallbackUnlock: false,
       deferredAfterRevert: false,
+      legsStats,
     };
   }
 
@@ -167,6 +162,7 @@ export async function getSettleLockStatus(
       allGamesFinal,
       usingFallbackUnlock: false,
       deferredAfterRevert: false,
+      legsStats,
     };
   }
 
@@ -182,6 +178,7 @@ export async function getSettleLockStatus(
     allGamesFinal: false,
     usingFallbackUnlock: true,
     deferredAfterRevert: false,
+    legsStats,
   };
 }
 
