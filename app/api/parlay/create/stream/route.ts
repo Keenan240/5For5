@@ -1,4 +1,7 @@
-import { runCreateParlay } from "@/lib/create-parlay";
+import {
+  parseCreateParlayRequest,
+  runCreateParlay,
+} from "@/lib/create-parlay";
 import type { CreateProgressEvent } from "@/lib/discovery-progress";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +11,8 @@ function sseLine(event: CreateProgressEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const options = await parseCreateParlayRequest(request);
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -18,7 +22,7 @@ export async function POST() {
       };
 
       try {
-        await runCreateParlay(send);
+        await runCreateParlay(send, undefined, options);
       } catch (err) {
         console.error("Create parlay stream error:", err);
         send({

@@ -39,6 +39,7 @@ import { PARLAY_LEG_COUNT } from "@/lib/scoring";
 import { BootLoader } from "@/components/boot-loader";
 import { FiveForFive } from "@/components/five-for-five";
 import { formatDisplayDate, getTodayEastern } from "@/lib/dates";
+import { gameKey } from "@/lib/slate-games";
 import type { SettleLockReason } from "@/lib/settle-lock-ui";
 import { settleButtonLabel, settleLockHint } from "@/lib/settle-lock-ui";
 
@@ -101,6 +102,9 @@ export default function Home() {
     null
   );
   const [showSlate, setShowSlate] = useState(false);
+  const [deselectedGameKeys, setDeselectedGameKeys] = useState<Set<string>>(
+    () => new Set()
+  );
   const [progressLines, setProgressLines] = useState<ProgressLine[]>([]);
   const [rankedPicks, setRankedPicks] = useState<RankedPick[]>([]);
   const [draftMeta, setDraftMeta] = useState<{
@@ -288,6 +292,33 @@ export default function Home() {
     return { wins, losses };
   }, [state?.history]);
 
+  const includedGames = useMemo(() => {
+    if (!state?.slate?.games.length) return [];
+    return state.slate.games.filter((g) => !deselectedGameKeys.has(gameKey(g)));
+  }, [state?.slate?.games, deselectedGameKeys]);
+
+  const slateGamesLocked = !!loading || !!state?.pending || !!draftMeta;
+
+  useEffect(() => {
+    setDeselectedGameKeys(new Set());
+  }, [state?.slate?.date]);
+
+  function toggleSlateGame(away: string, home: string) {
+    if (slateGamesLocked || !state?.slate) return;
+    const key = gameKey({ away, home });
+    const selectedCount = state.slate.games.length - deselectedGameKeys.size;
+    if (deselectedGameKeys.has(key)) {
+      setDeselectedGameKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      return;
+    }
+    if (selectedCount <= 1) return;
+    setDeselectedGameKeys((prev) => new Set(prev).add(key));
+  }
+
   function pushProgress(text: string, kind: ProgressLine["kind"] = "info") {
     progressId += 1;
     setProgressLines((prev) => [...prev, { id: progressId, text, kind }]);
@@ -437,6 +468,13 @@ export default function Home() {
     try {
       const res = await fetch("/api/parlay/create/stream", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          includedGames: includedGames.map((g) => ({
+            away: g.away,
+            home: g.home,
+          })),
+        }),
       });
 
       if (!res.ok || !res.body) {
@@ -730,7 +768,7 @@ export default function Home() {
       {state?.slate && (
         <CollapsiblePanel
           title={`Tonight · ${formatDisplayDate(state.slate.date)}`}
-          subtitle={`${state.slate.games.length} games`}
+          subtitle={`${includedGames.length} of ${state.slate.games.length} games in pool`}
           open={showSlate}
           onToggle={() => setShowSlate((v) => !v)}
           className="mb-4"
@@ -739,21 +777,38 @@ export default function Home() {
             {state.slate.games.length === 0 ? (
               <p className="text-[var(--text-muted)]">No games scheduled today.</p>
             ) : (
-              <ul className="space-y-1 text-[var(--text)]">
-                {state.slate.games.map((g) => (
-                  <li key={`${g.away}-${g.home}`}>
-                    {g.away} @ {g.home}
-                    <span className="ml-2 text-xs text-[var(--text-subtle)]">
-                      {g.status}
-                    </span>
-                  </li>
-                ))}
+              <ul className="space-y-1">
+                {state.slate.games.map((g) => {
+                  const selected = !deselectedGameKeys.has(gameKey(g));
+                  return (
+                    <li key={`${g.away}-${g.home}`}>
+                      <button
+                        type="button"
+                        onClick={() => toggleSlateGame(g.away, g.home)}
+                        disabled={slateGamesLocked}
+                        aria-pressed={selected}
+                        className={`flex w-full items-center justify-between rounded-lg px-2 py-2 text-left transition-colors disabled:opacity-50 ${
+                          selected
+                            ? "bg-green-950/40 text-[var(--text)] ring-1 ring-green-800/50"
+                            : "bg-[var(--bg-inset)] text-[var(--text-muted)] line-through opacity-60"
+                        }`}
+                      >
+                        <span>
+                          {g.away} @ {g.home}
+                        </span>
+                        <span className="ml-2 shrink-0 text-xs text-[var(--text-subtle)]">
+                          {g.status}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             )}
             <p className="mt-2 text-xs text-[var(--text-subtle)]">
-              {state.slate.rosterCount} players
+              Tap a game to exclude it from Create Parlay
               {state.qualifiedCount != null
-                ? ` · ${state.qualifiedCount} qualifying`
+                ? ` · ${state.qualifiedCount} qualifying (last run)`
                 : ""}
             </p>
           </div>

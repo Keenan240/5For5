@@ -1,10 +1,14 @@
-import { runCreateParlay } from "@/lib/create-parlay";
+import {
+  parseCreateParlayRequest,
+  runCreateParlay,
+} from "@/lib/create-parlay";
 
 export const maxDuration = 300;
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    const result = await runCreateParlay(() => {});
+    const options = await parseCreateParlayRequest(request);
+    const result = await runCreateParlay(() => {}, undefined, options);
 
     if (result.error && !result.ok) {
       return Response.json(

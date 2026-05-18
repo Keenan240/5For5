@@ -5,9 +5,46 @@ import {
   PARLAY_LEG_COUNT,
 } from "./scoring";
 import { getTonightSlate } from "./tonight";
+import type { TonightGame } from "./tonight";
+import { filterSlateByIncludedGames } from "./slate-games";
 import { formatMilestoneLabel } from "./milestones";
 import type { ProgressEmitter } from "./discovery-progress";
 import type { ParlayDraft, ParlayState } from "./types";
+
+export type CreateParlayOptions = {
+  /** Subset of tonight's games to scan; default = all games on the slate. */
+  includedGames?: Pick<TonightGame, "away" | "home">[];
+};
+
+export async function parseCreateParlayRequest(
+  request: Request
+): Promise<CreateParlayOptions> {
+  try {
+    const body = await request.json();
+    if (body?.includedGames && Array.isArray(body.includedGames)) {
+      const includedGames = body.includedGames
+        .filter(
+          (g: unknown) =>
+            g &&
+            typeof g === "object" &&
+            "away" in g &&
+            "home" in g &&
+            typeof (g as { away: unknown }).away === "string" &&
+            typeof (g as { home: unknown }).home === "string"
+        )
+        .map((g: { away: string; home: string }) => ({
+          away: g.away.toUpperCase(),
+          home: g.home.toUpperCase(),
+        }));
+      if (includedGames.length > 0) {
+        return { includedGames };
+      }
+    }
+  } catch {
+    /* empty body = all games */
+  }
+  return {};
+}
 
 export type CreateParlayResult = {
   ok: boolean;
@@ -23,7 +60,8 @@ export type CreateParlayResult = {
 
 export async function runCreateParlay(
   emit: ProgressEmitter,
-  legCount: number = PARLAY_LEG_COUNT
+  legCount: number = PARLAY_LEG_COUNT,
+  options: CreateParlayOptions = {}
 ): Promise<CreateParlayResult> {
   emit({ type: "phase", message: "Loading bankroll & slate…" });
 
@@ -42,10 +80,21 @@ export async function runCreateParlay(
   }
 
   emit({ type: "phase", message: "Fetching tonight's games & rosters…" });
-  const slate = await getTonightSlate();
+  const fullSlate = await getTonightSlate();
+
+  if (fullSlate.games.length === 0) {
+    const message = `No NBA games scheduled for ${fullSlate.date} (ET). No bet placed.`;
+    emit({ type: "noop", message, state });
+    return { ok: false, message, state };
+  }
+
+  const included =
+    options.includedGames?.length ? options.includedGames : fullSlate.games;
+
+  const slate = filterSlateByIncludedGames(fullSlate, included);
 
   if (slate.games.length === 0) {
-    const message = `No NBA games scheduled for ${slate.date} (ET). No bet placed.`;
+    const message = "No games selected for discovery. No bet placed.";
     emit({ type: "noop", message, state });
     return { ok: false, message, state };
   }
