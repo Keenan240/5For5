@@ -539,11 +539,20 @@ export default function Home() {
       odds: parseAmericanOdds(oddsByLeg[legKey(r)]!)!,
     }));
 
+    const rankedPool = rankedPicks.map((r) => ({
+      player: r.player,
+      team: r.team,
+      stat: r.stat,
+      threshold: r.threshold,
+      rank: r.rank,
+      inParlay: r.selected,
+    }));
+
     try {
       const res = await fetch("/api/parlay/place", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: draftMeta.date, legs }),
+        body: JSON.stringify({ date: draftMeta.date, legs, rankedPool }),
       });
       const data = await res.json();
       if (data.error || !data.ok) {
@@ -613,6 +622,28 @@ export default function Home() {
     setHistoryOpen(false);
     setHistoryVisibleCount(3);
     await fetchStatus();
+  }
+
+  async function handleBackfillHistoryRanked(historyIndex: number) {
+    setLoading("backfill");
+    setMessage(null);
+    try {
+      const res = await fetch("/api/history/backfill-ranked", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index: historyIndex }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setMessage(data.error ?? "Could not load ranked results.");
+        return;
+      }
+      await fetchStatus();
+    } catch {
+      setMessage("Could not load ranked results. Try again.");
+    } finally {
+      setLoading(null);
+    }
   }
 
   async function handleDeleteHistory(historyIndex: number) {
@@ -724,6 +755,7 @@ export default function Home() {
                     <HistoryCard
                       key={cardId}
                       parlay={h}
+                      historyIndex={historyIndex}
                       expanded={historyExpandedId === cardId}
                       onToggle={() =>
                         setHistoryExpandedId((id) =>
@@ -732,6 +764,10 @@ export default function Home() {
                       }
                       onDelete={() => handleDeleteHistory(historyIndex)}
                       deleteDisabled={!!loading}
+                      onBackfillRanked={() =>
+                        handleBackfillHistoryRanked(historyIndex)
+                      }
+                      backfillDisabled={!!loading}
                       onRevert={
                         !state?.pending &&
                         historyIndex === (state?.history.length ?? 0) - 1
@@ -1328,22 +1364,53 @@ function PendingCard({ parlay }: { parlay: PendingParlay }) {
 
 function HistoryCard({
   parlay,
+  historyIndex: _historyIndex,
   expanded,
   onToggle,
   onDelete,
   deleteDisabled,
+  onBackfillRanked,
+  backfillDisabled,
   onRevert,
   revertDisabled,
 }: {
   parlay: SettledParlay;
+  historyIndex: number;
   expanded: boolean;
   onToggle: () => void;
   onDelete: () => void;
   deleteDisabled?: boolean;
+  onBackfillRanked: () => Promise<void>;
+  backfillDisabled?: boolean;
   onRevert?: () => void;
   revertDisabled?: boolean;
 }) {
+  const [showRankedResults, setShowRankedResults] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
   const win = parlay.result === "win";
+  const rankedResults = parlay.rankedResults ?? [];
+  const alternates = rankedResults.filter((r) => !r.inParlay);
+  const rankedHits = rankedResults.filter((r) => r.hit).length;
+  const hasRankedResults = rankedResults.length > 0;
+
+  useEffect(() => {
+    if (!expanded) setShowRankedResults(false);
+  }, [expanded]);
+
+  async function handleOtherResultsClick() {
+    if (hasRankedResults) {
+      setShowRankedResults((v) => !v);
+      return;
+    }
+    setBackfilling(true);
+    try {
+      await onBackfillRanked();
+      setShowRankedResults(true);
+    } finally {
+      setBackfilling(false);
+    }
+  }
+
   return (
     <li className="rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)]">
       <div className="flex items-stretch">
@@ -1397,8 +1464,11 @@ function HistoryCard({
       </div>
       {expanded && (
         <div className="border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--text-muted)]">
+          <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
+            Parlay legs
+          </p>
           {parlay.legs.map((leg) => (
-            <p key={`${leg.player}-${leg.stat}`}>
+            <p key={`${leg.player}-${leg.stat}-${leg.threshold}`}>
               {leg.hit ? "✅" : "❌"} {leg.player}{" "}
               {formatMilestoneLabel(leg.stat, leg.threshold)} → {leg.actualValue}
             </p>
@@ -1406,6 +1476,58 @@ function HistoryCard({
           {parlay.failureAnalysis && (
             <p className="mt-2 text-[var(--text-muted)]">{parlay.failureAnalysis}</p>
           )}
+          <div className="mt-3 border-t border-[var(--border)] pt-3">
+            <button
+              type="button"
+              onClick={handleOtherResultsClick}
+              disabled={backfilling || backfillDisabled}
+              className="text-xs font-medium text-[var(--text-muted)] underline-offset-2 hover:text-[var(--text)] hover:underline disabled:opacity-50"
+            >
+              {backfilling
+                ? "Loading ranked results…"
+                : showRankedResults
+                  ? "Hide other results"
+                  : hasRankedResults
+                    ? "Show other results"
+                    : "Load other results"}
+            </button>
+            {!hasRankedResults && !backfilling && (
+              <p className="mt-1 text-[10px] text-[var(--text-faint)]">
+                Re-runs discovery for this night (DET/CLE, etc.) and checks every
+                ranked pick.
+              </p>
+            )}
+            {hasRankedResults && showRankedResults && (
+              <div className="mt-2 space-y-1">
+                  <p className="text-[var(--text)]">
+                    Ranked pool:{" "}
+                    <span className="text-green-400">{rankedHits}</span>/
+                    {rankedResults.length} hit
+                    {alternates.length > 0 && (
+                      <>
+                        {" "}
+                        · Alternates:{" "}
+                        <span className="text-green-400">
+                          {alternates.filter((r) => r.hit).length}
+                        </span>
+                        /{alternates.length}
+                      </>
+                    )}
+                  </p>
+                  {alternates.map((row) => (
+                    <p
+                      key={`${row.rank}-${row.player}-${row.stat}-${row.threshold}`}
+                    >
+                      {row.hit ? "✅" : "❌"}{" "}
+                      <span className="text-[var(--text-faint)]">#{row.rank}</span>{" "}
+                      {row.player}{" "}
+                      {formatMilestoneLabel(row.stat, row.threshold)} →{" "}
+                      {row.actualValue}
+                    </p>
+                  ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </li>

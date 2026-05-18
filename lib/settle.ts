@@ -2,7 +2,25 @@ import { STAT_KEY } from "./milestones";
 import { formatDisplayDate } from "./dates";
 import { getGameStatForDate, loadPlayerIdMap } from "./stats";
 import { calcPayout, roundMoney } from "./odds";
-import type { ParlayState, SettledParlay, SettledLeg } from "./types";
+import type {
+  ParlayState,
+  RankedPoolPick,
+  SettledParlay,
+  SettledLeg,
+  SettledRankedPick,
+} from "./types";
+
+export async function settleRankedPick(
+  pick: RankedPoolPick,
+  slateDate: string,
+  idMap: Awaited<ReturnType<typeof loadPlayerIdMap>>
+): Promise<SettledRankedPick> {
+  const key = STAT_KEY[pick.stat];
+  const latest = await getGameStatForDate(pick.player, key, slateDate, idMap);
+  const actualValue = latest?.value ?? 0;
+  const hit = actualValue >= pick.threshold;
+  return { ...pick, actualValue, hit };
+}
 
 export async function settlePending(state: ParlayState): Promise<{
   state: ParlayState;
@@ -48,6 +66,15 @@ export async function settlePending(state: ParlayState): Promise<{
 
   const newBankroll = roundMoney(state.bankroll + profit);
 
+  let rankedResults: SettledRankedPick[] | undefined;
+  if (pending.rankedPool?.length) {
+    rankedResults = await Promise.all(
+      pending.rankedPool.map((pick) =>
+        settleRankedPick(pick, pending.date, idMap)
+      )
+    );
+  }
+
   const settled: SettledParlay = {
     date: pending.date,
     stake: pending.stake,
@@ -58,6 +85,7 @@ export async function settlePending(state: ParlayState): Promise<{
     profit,
     bankrollAfter: newBankroll,
     failureAnalysis,
+    rankedResults,
   };
 
   const newState: ParlayState = {

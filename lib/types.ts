@@ -18,6 +18,20 @@ export type ParlayLeg = {
   minutes?: number[];
 };
 
+export type RankedPoolPick = {
+  player: string;
+  team: string;
+  stat: StatCategory;
+  threshold: number;
+  rank: number;
+  inParlay: boolean;
+};
+
+export type SettledRankedPick = RankedPoolPick & {
+  actualValue: number;
+  hit: boolean;
+};
+
 export type PendingParlay = {
   date: string;
   stake: number;
@@ -25,6 +39,8 @@ export type PendingParlay = {
   parlayOdds: number;
   potentialPayout: number;
   confidence: "LOW" | "MEDIUM" | "HIGH";
+  /** Full discovery ranking at place time — used to settle alternates in history. */
+  rankedPool?: RankedPoolPick[];
 };
 
 export type SettledLeg = ParlayLeg & {
@@ -42,6 +58,8 @@ export type SettledParlay = {
   profit: number;
   bankrollAfter: number;
   failureAnalysis?: string;
+  /** Outcomes for the full ranked pool from discovery (if saved at place time). */
+  rankedResults?: SettledRankedPick[];
 };
 
 export type ParlayDraft = {

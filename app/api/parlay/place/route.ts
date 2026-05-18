@@ -1,11 +1,12 @@
 import { runPlaceParlay } from "@/lib/place-parlay";
-import type { ParlayLeg } from "@/lib/types";
+import type { ParlayLeg, RankedPoolPick } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const date = String(body.date ?? "");
     const legs = body.legs as ParlayLeg[] | undefined;
+    const rankedPool = body.rankedPool as RankedPoolPick[] | undefined;
 
     if (!date || !legs?.length) {
       return Response.json(
@@ -14,7 +15,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await runPlaceParlay({ date, legs });
+    const result = await runPlaceParlay({ date, legs, rankedPool });
 
     if (!result.ok) {
       return Response.json(

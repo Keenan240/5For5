@@ -9,11 +9,17 @@ import {
   weakestStakeTier,
 } from "./odds";
 import { formatMilestoneLabel } from "./milestones";
-import type { ParlayLeg, ParlayState, PendingParlay } from "./types";
+import type {
+  ParlayLeg,
+  ParlayState,
+  PendingParlay,
+  RankedPoolPick,
+} from "./types";
 
 export type PlaceParlayInput = {
   date: string;
   legs: ParlayLeg[];
+  rankedPool?: RankedPoolPick[];
 };
 
 export type PlaceParlayResult = {
@@ -27,7 +33,8 @@ export type PlaceParlayResult = {
 export function buildPendingFromLegs(
   date: string,
   legs: ParlayLeg[],
-  bankroll: number
+  bankroll: number,
+  rankedPool?: RankedPoolPick[]
 ): { pending: PendingParlay; error?: string } {
   const legOdds = legs.map((l) => l.odds);
 
@@ -51,6 +58,7 @@ export function buildPendingFromLegs(
       parlayOdds,
       potentialPayout,
       confidence,
+      rankedPool: rankedPool?.length ? rankedPool : undefined,
     },
   };
 }
@@ -89,7 +97,8 @@ export async function runPlaceParlay(
   const { pending, error } = buildPendingFromLegs(
     input.date,
     legs,
-    state.bankroll
+    state.bankroll,
+    input.rankedPool
   );
   if (error || !pending) {
     return { ok: false, message: error ?? "Could not build parlay.", state, error };

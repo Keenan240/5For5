@@ -10,6 +10,10 @@ function settledToPending(settled: SettledParlay): PendingParlay {
     ({ actualValue: _v, hit: _h, ...rest }) => rest
   );
 
+  const rankedPool = settled.rankedResults?.map(
+    ({ actualValue: _v, hit: _h, ...rest }) => rest
+  );
+
   return {
     date: settled.date,
     stake: settled.stake,
@@ -17,6 +21,7 @@ function settledToPending(settled: SettledParlay): PendingParlay {
     parlayOdds: settled.parlayOdds,
     potentialPayout: roundMoney(calcPayout(settled.stake, settled.parlayOdds)),
     confidence: "MEDIUM",
+    rankedPool,
   };
 }
 
