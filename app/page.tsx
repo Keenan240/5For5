@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import type {
@@ -265,19 +266,6 @@ export default function Home() {
     fetchStatus,
   ]);
 
-  useEffect(() => {
-    if (!historyOpen) return;
-    const onScroll = () => {
-      if (window.scrollY < 48) {
-        setHistoryOpen(false);
-        setHistoryVisibleCount(3);
-        setHistoryExpandedId(null);
-      }
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [historyOpen]);
-
   const historyNewestFirst = useMemo(
     () => (state?.history ? [...state.history].reverse() : []),
     [state?.history]
@@ -353,7 +341,7 @@ export default function Home() {
             const label = formatMilestoneLabel(m.stat, m.threshold);
             const h2h =
               m.h2hGate && m.h2hLine
-                ? ` · ${m.h2hGate} · H2H ${m.h2hLine}${m.h2hTier ? ` · ${m.h2hTier}` : ""}`
+                ? ` · ${m.h2hGate} · H2H ${m.h2hLine}`
                 : "";
             pushProgress(
               `✓ ${event.player} → ${label} 5/5 [${m.last5.join(", ")}] · score ${m.score.toFixed(2)}${h2h}`,
@@ -755,7 +743,6 @@ export default function Home() {
                     <HistoryCard
                       key={cardId}
                       parlay={h}
-                      historyIndex={historyIndex}
                       expanded={historyExpandedId === cardId}
                       onToggle={() =>
                         setHistoryExpandedId((id) =>
@@ -1364,7 +1351,6 @@ function PendingCard({ parlay }: { parlay: PendingParlay }) {
 
 function HistoryCard({
   parlay,
-  historyIndex: _historyIndex,
   expanded,
   onToggle,
   onDelete,
@@ -1375,7 +1361,6 @@ function HistoryCard({
   revertDisabled,
 }: {
   parlay: SettledParlay;
-  historyIndex: number;
   expanded: boolean;
   onToggle: () => void;
   onDelete: () => void;
@@ -1397,7 +1382,9 @@ function HistoryCard({
     if (!expanded) setShowRankedResults(false);
   }, [expanded]);
 
-  async function handleOtherResultsClick() {
+  async function handleOtherLegsClick(e: MouseEvent<HTMLButtonElement>) {
+    e.stopPropagation();
+    if (backfilling) return;
     if (hasRankedResults) {
       setShowRankedResults((v) => !v);
       return;
@@ -1405,7 +1392,6 @@ function HistoryCard({
     setBackfilling(true);
     try {
       await onBackfillRanked();
-      setShowRankedResults(true);
     } finally {
       setBackfilling(false);
     }
@@ -1463,7 +1449,10 @@ function HistoryCard({
         </button>
       </div>
       {expanded && (
-        <div className="border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--text-muted)]">
+        <div
+          className="border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--text-muted)]"
+          onTouchStart={(e) => e.stopPropagation()}
+        >
           <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
             Parlay legs
           </p>
@@ -1479,22 +1468,21 @@ function HistoryCard({
           <div className="mt-3 border-t border-[var(--border)] pt-3">
             <button
               type="button"
-              onClick={handleOtherResultsClick}
+              onClick={handleOtherLegsClick}
               disabled={backfilling || backfillDisabled}
               className="text-xs font-medium text-[var(--text-muted)] underline-offset-2 hover:text-[var(--text)] hover:underline disabled:opacity-50"
             >
               {backfilling
-                ? "Loading ranked results…"
+                ? "Loading other legs…"
                 : showRankedResults
-                  ? "Hide other results"
+                  ? "Hide other legs"
                   : hasRankedResults
-                    ? "Show other results"
-                    : "Load other results"}
+                    ? "Show other legs"
+                    : "Load other legs"}
             </button>
             {!hasRankedResults && !backfilling && (
               <p className="mt-1 text-[10px] text-[var(--text-faint)]">
-                Re-runs discovery for this night (DET/CLE, etc.) and checks every
-                ranked pick.
+                Re-runs discovery for this night and checks every ranked pick.
               </p>
             )}
             {hasRankedResults && showRankedResults && (

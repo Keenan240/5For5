@@ -1,5 +1,5 @@
 import { fetchJson } from "./fetch";
-import { pickBestSlateGame } from "./dates";
+import { normalizeGameLogDate, pickBestSlateGame } from "./dates";
 import { canonicalTeamAbbrev } from "./h2h";
 import type { GameLog, SeasonType } from "./types";
 
@@ -161,7 +161,7 @@ function parseEspnGamelogResponse(data: unknown): GameLog[] {
         if (!matchup) continue;
         const s = e.stats;
         rows.push({
-          date: meta.gameDate,
+          date: normalizeGameLogDate(meta.gameDate),
           opponent: matchup,
           seasonType,
           pts: Number(statVal(s, idx.pts)) || 0,

@@ -45,11 +45,9 @@ import {
 } from "./stats";
 
 import {
-  applyH2hToScore,
-  buildH2hEvaluation,
-  discoverMilestoneOnWindow,
-  formatH2hSampleLine,
-  h2hFactorForThreshold,
+  formatH2hVetoLine,
+  gamesVsOpponent,
+  passesH2hVetoVsOpponent,
 } from "./h2h";
 
 import { opponentForTeam, type GameMatchup } from "./slate-games";
@@ -357,14 +355,14 @@ async function evaluatePlayerH2h(
 
 ): Promise<PlayerEval> {
 
-  const fullLogs = await getPlayerFullGameLogs(
+  const logs = await getLast5Games(
     p.player,
     idMap,
-    fullLogCache,
+    logCache,
     p.nbaPlayerId
   );
 
-  if (fullLogs.length < 5) {
+  if (logs.length < 5) {
 
     const playerId = await getPlayerId(p.player, idMap, p.nbaPlayerId);
 
@@ -376,7 +374,7 @@ async function evaluatePlayerH2h(
 
       status: !playerId && !hasEspn ? "no_id" : "short_log",
 
-      gameCount: fullLogs.length,
+      gameCount: logs.length,
 
       milestones: [],
 
@@ -395,50 +393,30 @@ async function evaluatePlayerH2h(
     return evaluatePlayerStandard(p, idMap, logCache);
   }
 
-  const h2h = buildH2hEvaluation(fullLogs, p.team, opponent);
+  const fullLogs = await getPlayerFullGameLogs(
+    p.player,
+    idMap,
+    fullLogCache,
+    p.nbaPlayerId
+  );
 
-  if (!h2h) {
-
-    return {
-
-      player: p,
-
-      status: "no_milestone",
-
-      gameCount: fullLogs.length,
-
-      milestones: [],
-
-      candidates: [],
-
-    };
-
-  }
+  const vsOpp = gamesVsOpponent(fullLogs, p.team, opponent);
 
   const milestones: MilestoneHit[] = [];
 
   for (const stat of STAT_CATEGORIES) {
 
-    const { threshold, values } = discoverMilestoneOnWindow(
-      h2h.milestoneWindow,
-      stat
-    );
+    const values = extractStatValues(logs, stat);
+
+    const threshold = discoverMilestone(values, LADDERS[stat]);
 
     if (threshold === null) continue;
+
+    if (!passesH2hVetoVsOpponent(vsOpp, stat, threshold)) continue;
 
     const buffer = averageBuffer(values, threshold);
 
     const odds = estimateOddsFromBuffer(buffer, stat);
-
-    const baseScore = scoreLeg(buffer, odds);
-
-    const h2hFactor = h2hFactorForThreshold(
-      h2h.h2hSample,
-      stat,
-      threshold
-    );
-
-    const score = applyH2hToScore(baseScore, h2hFactor, h2h.h2hEmphasis);
 
     milestones.push({
 
@@ -452,15 +430,13 @@ async function evaluatePlayerH2h(
 
       odds,
 
-      score,
+      score: scoreLeg(buffer, odds),
 
-      h2hTier: h2h.tier,
+      h2hOpponent: opponent,
 
-      h2hOpponent: h2h.opponent,
+      h2hGate: `L5 5/5 + H2H veto vs ${opponent}`,
 
-      h2hGate: h2h.gateLabel,
-
-      h2hLine: formatH2hSampleLine(h2h.h2hSample, stat, threshold),
+      h2hLine: formatH2hVetoLine(vsOpp, stat, threshold),
 
     });
 
@@ -474,7 +450,7 @@ async function evaluatePlayerH2h(
 
       status: "no_milestone",
 
-      gameCount: fullLogs.length,
+      gameCount: logs.length,
 
       milestones: [],
 
@@ -490,7 +466,7 @@ async function evaluatePlayerH2h(
 
     status: "qualified",
 
-    gameCount: fullLogs.length,
+    gameCount: logs.length,
 
     milestones,
 

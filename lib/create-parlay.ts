@@ -126,7 +126,7 @@ export async function runCreateParlay(
   emit({
     type: "phase",
     message: options.h2hMode
-      ? `Scanning ${slate.players.length} players (H2H playoff mode — tiered 5/5 + opponent weighting)…`
+      ? `Scanning ${slate.players.length} players (H2H mode — same L5 5/5 + veto if any vs-opponent game is under the line)…`
       : `Scanning ${slate.players.length} players (last 5 games via NBA or ESPN, every 5/5 milestone)…`,
   });
 

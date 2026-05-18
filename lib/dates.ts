@@ -29,6 +29,21 @@ export function formatDisplayDate(ymd: string): string {
   }).format(date);
 }
 
+/**
+ * Canonical calendar date for every `GameLog.date` (Eastern YYYY-MM-DD).
+ * NBA `GAME_DATE` is often `"APR 10, 2025"` — never use `slice(0, 10)` on raw
+ * strings (that yields garbage like `"APR 10, 20"`) or ESPN + NBA rows for the
+ * same night fail to dedupe, breaking “last 5” milestone windows.
+ */
+export function normalizeGameLogDate(raw: string): string {
+  const trimmed = raw.trim();
+  const ymd = logDateToYmd(trimmed);
+  if (ymd) return ymd;
+  const iso = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return iso[1];
+  return trimmed.slice(0, 10) || trimmed;
+}
+
 /** Normalize NBA / ESPN log dates to YYYY-MM-DD (Eastern). */
 export function logDateToYmd(logDate: string): string | null {
   const iso = logDate.match(/^(\d{4}-\d{2}-\d{2})/);

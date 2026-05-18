@@ -74,7 +74,10 @@ export function DiscoveryInfoModal({ open, onClose }: DiscoveryInfoModalProps) {
             player cleared the line in the evaluation window (buffer) and
             estimated odds. Higher scores rank higher. The top five lines by
             score are auto-selected; you can swap picks before placing. A player
-            can appear more than once if multiple stats hit 5/5.
+            can appear more than once if multiple stats hit 5/5. The window is
+            the player&apos;s most recent five games as returned by the stats
+            feeds (NBA with ESPN fill-in when needed), in chronological order for
+            the milestone check.
           </p>
         </section>
 
@@ -83,12 +86,14 @@ export function DiscoveryInfoModal({ open, onClose }: DiscoveryInfoModalProps) {
             H2H playoff mode
           </h3>
           <p className="text-sm leading-relaxed text-[var(--text-muted)]">
-            Weights performance against tonight&apos;s opponent. Early in a
-            series, milestones use last five overall games while H2H history
-            adjusts rank. From Game 3 (two prior series games), blend mode
-            emphasizes matchup games more. After five playoff meetings vs that
-            team, milestones use only those series games. Best for focused
-            playoff matchups—not required for a normal full-slate night.
+            Same strict 5/5 milestone ladder and scoring as normal discovery on
+            the last five games. The only extra rule is the head-to-head veto:
+            if the player has any prior game in the merged log against
+            tonight&apos;s opponent, every such game must be at or above the same
+            milestone line; if even one matchup game is below the bar, that line
+            is not offered in H2H mode. If there is no prior game vs that opponent,
+            nothing is vetoed. Best when you care about matchup history on a
+            known opponent—not required for a normal full-slate night.
           </p>
         </section>
       </div>

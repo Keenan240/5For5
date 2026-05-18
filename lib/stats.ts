@@ -1,5 +1,5 @@
 import { fetchJson } from "./fetch";
-import { pickBestSlateGame } from "./dates";
+import { normalizeGameLogDate, pickBestSlateGame } from "./dates";
 import {
   getEspnGameLogs,
   getGameStatFromEspnForDate,
@@ -124,7 +124,7 @@ async function fetchGameLogsForType(
   const col = (name: string) => h.indexOf(name);
 
   return rows.map((r) => ({
-    date: String(r[col("GAME_DATE")]),
+    date: normalizeGameLogDate(String(r[col("GAME_DATE")])),
     opponent: String(r[col("MATCHUP")]),
     seasonType,
     pts: Number(r[col("PTS")]),
@@ -138,7 +138,7 @@ async function fetchGameLogsForType(
 }
 
 async function fetchAllGameLogs(playerId: string): Promise<GameLog[]> {
-  const cacheKey = `nba-logs:${playerId}`;
+  const cacheKey = `nba-logs:v2:${playerId}`;
   return cachedFetch(cacheKey, async () => {
     const [regular, playoffs] = await Promise.all([
       fetchGameLogsForType(playerId, "Regular Season"),
@@ -176,10 +176,10 @@ async function fetchLast5FromNba(
 function mergeGameLogs(primary: GameLog[], supplemental: GameLog[]): GameLog[] {
   const byDate = new Map<string, GameLog>();
   for (const g of supplemental) {
-    byDate.set(g.date.slice(0, 10), g);
+    byDate.set(normalizeGameLogDate(g.date), g);
   }
   for (const g of primary) {
-    const key = g.date.slice(0, 10);
+    const key = normalizeGameLogDate(g.date);
     const existing = byDate.get(key);
     if (!existing) {
       byDate.set(key, g);
