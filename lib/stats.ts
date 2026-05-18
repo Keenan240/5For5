@@ -1,10 +1,12 @@
 import { fetchJson } from "./fetch";
 import { pickBestSlateGame } from "./dates";
 import {
+  getEspnGameLogs,
   getGameStatFromEspnForDate,
   getLast5GamesFromEspn,
   getLatestGameStatFromEspn,
 } from "./espn";
+import { looksLikeMatchup } from "./h2h";
 import { STAT_KEY } from "./milestones";
 import { cachedFetch } from "./stats-cache";
 import type { GameLog, StatCategory } from "./types";
@@ -171,6 +173,32 @@ async function fetchLast5FromNba(
   return last5;
 }
 
+function mergeGameLogs(primary: GameLog[], supplemental: GameLog[]): GameLog[] {
+  const byDate = new Map<string, GameLog>();
+  for (const g of supplemental) {
+    byDate.set(g.date.slice(0, 10), g);
+  }
+  for (const g of primary) {
+    const key = g.date.slice(0, 10);
+    const existing = byDate.get(key);
+    if (!existing) {
+      byDate.set(key, g);
+      continue;
+    }
+    const usePrimary =
+      looksLikeMatchup(g.opponent) || !looksLikeMatchup(existing.opponent);
+    byDate.set(
+      key,
+      usePrimary
+        ? { ...g, seasonType: g.seasonType ?? existing.seasonType }
+        : existing
+    );
+  }
+  return [...byDate.values()].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  );
+}
+
 /** Full season log (newest first) — for H2H discovery. */
 export async function getPlayerFullGameLogs(
   playerName: string,
@@ -186,20 +214,24 @@ export async function getPlayerFullGameLogs(
   let logs: GameLog[] = [];
   if (playerId) {
     logs = await fetchAllGameLogs(playerId);
-    fullCache?.set(playerId, logs);
   }
 
-  if (logs.length < 5) {
-    const espnLogs = await getLast5GamesFromEspn(playerName);
-    if (espnLogs.length > logs.length) {
-      logs = espnLogs.map((g) => ({
-        ...g,
-        seasonType: g.seasonType ?? "Regular Season",
-      }));
-      if (playerId && fullCache) fullCache.set(playerId, logs);
+  const matchupRows = logs.filter((g) => looksLikeMatchup(g.opponent)).length;
+  const needsEspn =
+    logs.length < 5 ||
+    (logs.length > 0 && matchupRows < Math.min(5, logs.length));
+
+  if (needsEspn) {
+    const espnLogs = await getEspnGameLogs(playerName, 82);
+    if (espnLogs.length) {
+      logs =
+        logs.length === 0
+          ? espnLogs
+          : mergeGameLogs(logs, espnLogs);
     }
   }
 
+  if (playerId && fullCache) fullCache.set(playerId, logs);
   return logs;
 }
 

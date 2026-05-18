@@ -38,9 +38,31 @@ export function tierForSeriesCount(seriesGamesPlayed: number): H2hTier {
   return "early";
 }
 
+/** ESPN / legacy tricodes → NBA stats tricode (for H2H matching). */
+const TEAM_ABBREV_ALIASES: Record<string, string> = {
+  SA: "SAS",
+  GS: "GSW",
+  NO: "NOP",
+  NY: "NYK",
+  PHO: "PHX",
+  UTAH: "UTA",
+};
+
+export function canonicalTeamAbbrev(abbrev: string): string {
+  const u = abbrev.toUpperCase().trim();
+  return TEAM_ABBREV_ALIASES[u] ?? u;
+}
+
 export function parseTeamsFromMatchup(matchup: string): string[] {
-  const found = matchup.toUpperCase().match(/\b[A-Z]{3}\b/g);
-  return found ?? [];
+  const found = matchup.toUpperCase().match(/\b[A-Z]{2,3}\b/g);
+  if (!found?.length) return [];
+  return [...new Set(found.map(canonicalTeamAbbrev))];
+}
+
+export function looksLikeMatchup(opponentField: string): boolean {
+  const u = opponentField.toUpperCase();
+  if (/\b[A-Z]{2,3}\s+(VS\.?|@)\s+[A-Z]{2,3}\b/.test(u)) return true;
+  return parseTeamsFromMatchup(u).length >= 2;
 }
 
 export function opponentFromMatchup(
@@ -48,8 +70,8 @@ export function opponentFromMatchup(
   playerTeam: string
 ): string | null {
   const teams = parseTeamsFromMatchup(matchup);
-  const pt = playerTeam.toUpperCase();
-  const other = teams.find((t) => t !== pt);
+  const pt = canonicalTeamAbbrev(playerTeam);
+  const other = teams.find((t) => canonicalTeamAbbrev(t) !== pt);
   return other ?? null;
 }
 

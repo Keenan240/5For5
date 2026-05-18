@@ -1,6 +1,7 @@
 import { fetchJson } from "./fetch";
 import { pickBestSlateGame } from "./dates";
-import type { GameLog } from "./types";
+import { canonicalTeamAbbrev } from "./h2h";
+import type { GameLog, SeasonType } from "./types";
 
 const ESPN_SEARCH =
   "https://site.api.espn.com/apis/common/v3/search";
@@ -67,15 +68,42 @@ function parseMinutes(min: string): number {
   return parseFloat(min) || 0;
 }
 
+type EspnEventMeta = {
+  gameDate?: string;
+  gameId?: string;
+  atVs?: string;
+  team?: { abbreviation?: string };
+  opponent?: { abbreviation?: string; displayName?: string };
+};
+
 type EspnGameLogResponse = {
   names?: string[];
   labels?: string[];
-  events?: Record<string, { gameDate?: string; gameId?: string }>;
+  events?: Record<string, EspnEventMeta>;
   seasonTypes?: {
     displayName?: string;
     categories?: { events?: { eventId: string; stats?: string[] }[] }[];
   }[];
 };
+
+function seasonTypeFromEspnLabel(displayName: string): SeasonType {
+  return /postseason|playoff|play-in/i.test(displayName)
+    ? "Playoffs"
+    : "Regular Season";
+}
+
+function matchupFromEspnEvent(meta: EspnEventMeta): string {
+  const teamRaw = meta.team?.abbreviation?.toUpperCase();
+  const oppRaw = meta.opponent?.abbreviation?.toUpperCase();
+  if (!teamRaw || !oppRaw) {
+    const name = meta.opponent?.displayName?.trim();
+    return name ?? "";
+  }
+  const team = canonicalTeamAbbrev(teamRaw);
+  const opp = canonicalTeamAbbrev(oppRaw);
+  const sep = meta.atVs === "@" ? "@" : "vs.";
+  return `${team} ${sep} ${opp}`;
+}
 
 function statCol(names: string[], ...candidates: string[]): number {
   for (const c of candidates) {
@@ -124,14 +152,18 @@ function parseEspnGamelogResponse(data: unknown): GameLog[] {
   const rows: GameLog[] = [];
 
   for (const st of seasonTypes) {
+    const seasonType = seasonTypeFromEspnLabel(st.displayName ?? "");
     for (const cat of st.categories ?? []) {
       for (const e of cat.events ?? []) {
         const meta = events[e.eventId];
         if (!meta?.gameDate) continue;
+        const matchup = matchupFromEspnEvent(meta);
+        if (!matchup) continue;
         const s = e.stats;
         rows.push({
           date: meta.gameDate,
-          opponent: st.displayName ?? "",
+          opponent: matchup,
+          seasonType,
           pts: Number(statVal(s, idx.pts)) || 0,
           reb: Number(statVal(s, idx.reb)) || 0,
           ast: Number(statVal(s, idx.ast)) || 0,

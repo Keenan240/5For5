@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   buildH2hEvaluation,
   discoverMilestoneOnWindow,
+  isGameVsOpponent,
   tierForSeriesCount,
 } from "../lib/h2h";
 import type { GameLog } from "../lib/types";
@@ -102,5 +103,25 @@ const slumpEval = buildH2hEvaluation(slumpSeries, "SAS", "OKC");
 assert(slumpEval);
 const slump15 = discoverMilestoneOnWindow(slumpEval.milestoneWindow, "Points");
 assert.notEqual(slump15.threshold, 15, "12 in series window blocks 15+");
+
+// ESPN-style matchup (SA) still matches SAS vs OKC
+assert(
+  isGameVsOpponent(
+    {
+      date: "2025-12-25",
+      opponent: "SAS @ OKC",
+      seasonType: "Regular Season",
+      pts: 20,
+      reb: 0,
+      ast: 0,
+      fg3m: 0,
+      stl: 0,
+      blk: 0,
+      min: 30,
+    },
+    "OKC",
+    "SA"
+  )
+);
 
 console.log("verify-h2h: all assertions passed");
