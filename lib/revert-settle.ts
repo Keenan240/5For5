@@ -10,9 +10,12 @@ function settledToPending(settled: SettledParlay): PendingParlay {
     ({ actualValue: _v, hit: _h, ...rest }) => rest
   );
 
-  const rankedPool = settled.rankedResults?.map(
-    ({ actualValue: _v, hit: _h, ...rest }) => rest
-  );
+  const rankedPool =
+    settled.rankedPool?.length
+      ? settled.rankedPool
+      : settled.rankedResults?.map(
+          ({ actualValue: _v, hit: _h, ...rest }) => rest
+        );
 
   return {
     date: settled.date,

@@ -28,10 +28,29 @@ function gamesForParlayTeams(
   );
 }
 
-/** Re-run discovery for a settled night and resolve every ranked alternate. */
+async function settleRankedPool(
+  pool: RankedPoolPick[],
+  slateDate: string,
+  idMap: Awaited<ReturnType<typeof loadPlayerIdMap>>
+): Promise<SettledRankedPick[]> {
+  return Promise.all(
+    pool.map((pick) => settleRankedPick(pick, slateDate, idMap))
+  );
+}
+
+/**
+ * Resolve alternate ranked picks for history using place-time lines when
+ * available, otherwise discovery with last-5 excluding the slate night.
+ */
 export async function buildRankedResultsForParlay(
   parlay: SettledParlay
 ): Promise<SettledRankedPick[]> {
+  const idMap = await loadPlayerIdMap();
+
+  if (parlay.rankedPool?.length) {
+    return settleRankedPool(parlay.rankedPool, parlay.date, idMap);
+  }
+
   const slate = await getSlateForDate(parlay.date);
   const games = gamesForParlayTeams(slate, parlay.legs);
   if (games.length === 0) {
@@ -41,7 +60,9 @@ export async function buildRankedResultsForParlay(
   }
 
   const filtered = filterSlateByIncludedGames(slate, games);
-  const { candidates } = await discoverTonightCandidates(filtered);
+  const { candidates } = await discoverTonightCandidates(filtered, {
+    beforeSlateYmd: parlay.date,
+  });
   if (candidates.length === 0) {
     throw new Error("No qualifying candidates found for that date.");
   }
@@ -58,8 +79,5 @@ export async function buildRankedResultsForParlay(
     inParlay: inParlayKeys.has(poolPickKey(c)),
   }));
 
-  const idMap = await loadPlayerIdMap();
-  return Promise.all(
-    pool.map((pick) => settleRankedPick(pick, parlay.date, idMap))
-  );
+  return settleRankedPool(pool, parlay.date, idMap);
 }

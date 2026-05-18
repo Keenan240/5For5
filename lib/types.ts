@@ -58,7 +58,9 @@ export type SettledParlay = {
   profit: number;
   bankrollAfter: number;
   failureAnalysis?: string;
-  /** Outcomes for the full ranked pool from discovery (if saved at place time). */
+  /** Full ranked pool frozen at place time (for honest history alternates). */
+  rankedPool?: RankedPoolPick[];
+  /** Outcomes for the full ranked pool (if saved at settle / backfill). */
   rankedResults?: SettledRankedPick[];
 };
 

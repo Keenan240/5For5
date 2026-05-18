@@ -41,14 +41,15 @@ export async function backfillHistoryRanked(
   }
 
   const entry = state.history[index];
-  if (entry.rankedResults?.length) {
-    return { ok: true, state };
-  }
 
   try {
     const rankedResults = await buildRankedResultsForParlay(entry);
+    const rankedPool =
+      entry.rankedPool?.length
+        ? entry.rankedPool
+        : rankedResults.map(({ actualValue: _v, hit: _h, ...pick }) => pick);
     const history = state.history.map((h, i) =>
-      i === index ? { ...h, rankedResults } : h
+      i === index ? { ...h, rankedResults, rankedPool } : h
     );
     const next: ParlayState = { ...state, history };
     await setState(next);

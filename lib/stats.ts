@@ -1,5 +1,9 @@
 import { fetchJson } from "./fetch";
-import { normalizeGameLogDate, pickBestSlateGame } from "./dates";
+import {
+  normalizeGameLogDate,
+  pickBestSlateGame,
+  slateDateCandidates,
+} from "./dates";
 import {
   getEspnGameLogs,
   getGameStatFromEspnForDate,
@@ -161,15 +165,36 @@ async function findNbaGameOnSlate(
 export type PlayerLogCache = Map<string, GameLog[]>;
 export type PlayerFullLogCache = Map<string, GameLog[]>;
 
+export type Last5GamesOptions = {
+  /** Omit games on the slate calendar night (±1 day) — pre-lock discovery / history. */
+  beforeSlateYmd?: string;
+};
+
+function last5CacheKey(playerId: string, opts?: Last5GamesOptions): string {
+  return opts?.beforeSlateYmd ? `${playerId}:pre:${opts.beforeSlateYmd}` : playerId;
+}
+
+function isOnSlateNight(logDate: string, slateYmd: string): boolean {
+  const ymd = normalizeGameLogDate(logDate);
+  return slateDateCandidates(slateYmd).includes(ymd);
+}
+
 async function fetchLast5FromNba(
   playerId: string,
-  cache?: PlayerLogCache
+  cache?: PlayerLogCache,
+  opts?: Last5GamesOptions
 ): Promise<GameLog[]> {
-  if (cache?.has(playerId)) return cache.get(playerId)!;
+  const key = last5CacheKey(playerId, opts);
+  if (cache?.has(key)) return cache.get(key)!;
 
-  const combined = await fetchAllGameLogs(playerId);
+  let combined = await fetchAllGameLogs(playerId);
+  if (opts?.beforeSlateYmd) {
+    combined = combined.filter(
+      (g) => !isOnSlateNight(g.date, opts.beforeSlateYmd!)
+    );
+  }
   const last5 = combined.slice(0, 5).reverse();
-  cache?.set(playerId, last5);
+  cache?.set(key, last5);
   return last5;
 }
 
@@ -240,20 +265,27 @@ export async function getLast5Games(
   playerName: string,
   idMap?: Map<string, string>,
   cache?: PlayerLogCache,
-  explicitNbaId?: string
+  explicitNbaId?: string,
+  opts?: Last5GamesOptions
 ): Promise<GameLog[]> {
   const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
   let last5: GameLog[] = [];
 
   if (playerId) {
-    last5 = await fetchLast5FromNba(playerId, cache);
+    last5 = await fetchLast5FromNba(playerId, cache, opts);
   }
 
   if (last5.length < 5) {
-    const espnLogs = await getLast5GamesFromEspn(playerName);
+    const espnLogs = opts?.beforeSlateYmd
+      ? (await getEspnGameLogs(playerName, 40)).filter(
+          (g) => !isOnSlateNight(g.date, opts.beforeSlateYmd!)
+        ).slice(-5)
+      : await getLast5GamesFromEspn(playerName);
     if (espnLogs.length >= last5.length) {
       last5 = espnLogs;
-      if (playerId && cache) cache.set(playerId, last5);
+      if (playerId && cache) {
+        cache.set(last5CacheKey(playerId, opts), last5);
+      }
     }
   }
 

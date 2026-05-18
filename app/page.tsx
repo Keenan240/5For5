@@ -1428,6 +1428,7 @@ function HistoryCard({
   const alternates = rankedResults.filter((r) => !r.inParlay);
   const rankedHits = rankedResults.filter((r) => r.hit).length;
   const hasRankedResults = rankedResults.length > 0;
+  const hasPlaceTimePool = (parlay.rankedPool?.length ?? 0) > 0;
 
   useEffect(() => {
     if (!expanded) setShowRankedResults(false);
@@ -1436,13 +1437,15 @@ function HistoryCard({
   async function handleOtherLegsClick(e: MouseEvent<HTMLButtonElement>) {
     e.stopPropagation();
     if (backfilling) return;
-    if (hasRankedResults) {
+    const needsRefresh = !hasRankedResults || !hasPlaceTimePool;
+    if (hasRankedResults && hasPlaceTimePool) {
       setShowRankedResults((v) => !v);
       return;
     }
     setBackfilling(true);
     try {
       await onBackfillRanked();
+      setShowRankedResults(true);
     } finally {
       setBackfilling(false);
     }
@@ -1527,13 +1530,16 @@ function HistoryCard({
                 ? "Loading other legs…"
                 : showRankedResults
                   ? "Hide other legs"
-                  : hasRankedResults
+                  : hasRankedResults && hasPlaceTimePool
                     ? "Show other legs"
-                    : "Load other legs"}
+                    : hasRankedResults
+                      ? "Refresh other legs"
+                      : "Load other legs"}
             </button>
             {!hasRankedResults && !backfilling && (
               <p className="mt-1 text-[10px] text-[var(--text-faint)]">
-                Re-runs discovery for this night and checks every ranked pick.
+                Uses place-time ranked lines when saved; otherwise pre-game
+                discovery (slate night excluded from last 5).
               </p>
             )}
             {hasRankedResults && showRankedResults && (

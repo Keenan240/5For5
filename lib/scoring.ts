@@ -88,6 +88,8 @@ const DISCOVERY_CONCURRENCY = 12;
 export type DiscoveryOptions = {
   h2hMode?: boolean;
   slateGames?: GameMatchup[];
+  /** Exclude slate-night games from last-5 (history backfill / pre-lock view). */
+  beforeSlateYmd?: string;
 };
 
 
@@ -110,11 +112,13 @@ export type DiscoveryResult = {
 
 export async function discoverTonightCandidates(
 
-  slate: TonightSlate
+  slate: TonightSlate,
+
+  options: DiscoveryOptions = {}
 
 ): Promise<DiscoveryResult> {
 
-  return discoverTonightCandidatesWithProgress(slate);
+  return discoverTonightCandidatesWithProgress(slate, undefined, options);
 
 }
 
@@ -147,6 +151,7 @@ export async function discoverTonightCandidatesWithProgress(
   const discoveryOpts: DiscoveryOptions = {
     h2hMode: options.h2hMode,
     slateGames: options.slateGames ?? slate.games,
+    beforeSlateYmd: options.beforeSlateYmd,
   };
 
 
@@ -238,7 +243,7 @@ async function evaluatePlayer(
     return evaluatePlayerH2h(p, idMap, logCache, fullLogCache, options);
   }
 
-  return evaluatePlayerStandard(p, idMap, logCache);
+  return evaluatePlayerStandard(p, idMap, logCache, options);
 }
 
 async function evaluatePlayerStandard(
@@ -247,11 +252,21 @@ async function evaluatePlayerStandard(
 
   idMap: Map<string, string>,
 
-  logCache: PlayerLogCache
+  logCache: PlayerLogCache,
+
+  options: DiscoveryOptions = {}
 
 ): Promise<PlayerEval> {
 
-  const logs = await getLast5Games(p.player, idMap, logCache, p.nbaPlayerId);
+  const logs = await getLast5Games(
+    p.player,
+    idMap,
+    logCache,
+    p.nbaPlayerId,
+    options.beforeSlateYmd
+      ? { beforeSlateYmd: options.beforeSlateYmd }
+      : undefined
+  );
 
   if (logs.length < 5) {
 
@@ -359,7 +374,10 @@ async function evaluatePlayerH2h(
     p.player,
     idMap,
     logCache,
-    p.nbaPlayerId
+    p.nbaPlayerId,
+    options.beforeSlateYmd
+      ? { beforeSlateYmd: options.beforeSlateYmd }
+      : undefined
   );
 
   if (logs.length < 5) {
@@ -390,7 +408,7 @@ async function evaluatePlayerH2h(
   );
 
   if (!opponent) {
-    return evaluatePlayerStandard(p, idMap, logCache);
+    return evaluatePlayerStandard(p, idMap, logCache, options);
   }
 
   const fullLogs = await getPlayerFullGameLogs(

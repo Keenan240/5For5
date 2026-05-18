@@ -85,6 +85,7 @@ export async function settlePending(state: ParlayState): Promise<{
     profit,
     bankrollAfter: newBankroll,
     failureAnalysis,
+    rankedPool: pending.rankedPool,
     rankedResults,
   };
 
