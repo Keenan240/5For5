@@ -2,6 +2,7 @@ import { fetchJson } from "./fetch";
 import { bdlHeaders, hasBdlKey, nbaSeasonYear } from "./bdl-client";
 import { nbaTeamId } from "./nba-teams";
 import { fetchRostersFromEspn } from "./espn-roster";
+import { formatGameTimeLabel } from "./game-time";
 import type { TonightPlayer } from "./scoring";
 
 const BDL_BASE = "https://api.balldontlie.io/v1";
@@ -36,6 +37,7 @@ export type TonightGame = {
 
 type BdlGame = {
   date: string;
+  datetime?: string;
   status: string;
   postseason: boolean;
   home_team: { id: number; abbreviation: string };
@@ -111,7 +113,10 @@ async function getSlateFromBdl(date: string): Promise<TonightSlate> {
   const slateGames: TonightGame[] = games.map((g) => ({
     home: g.home_team.abbreviation,
     away: g.visitor_team.abbreviation,
-    status: g.status,
+    status: formatGameTimeLabel({
+      datetimeUtc: g.datetime,
+      statusText: g.status,
+    }),
     postseason: g.postseason,
   }));
 
@@ -289,10 +294,11 @@ async function fetchNbaScoreboard(date: string): Promise<{
     const awayId = row[col("VISITOR_TEAM_ID")] as number;
     teamIds.push(homeId, awayId);
 
+    const statusText = String(row[col("GAME_STATUS_TEXT")] ?? "");
     games.push({
       home: String(row[col("HOME_TEAM_ABBREVIATION")]),
       away: String(row[col("VISITOR_TEAM_ABBREVIATION")]),
-      status: String(row[col("GAME_STATUS_TEXT")] ?? ""),
+      status: formatGameTimeLabel({ statusText }),
       postseason: false,
       homeTeamId: homeId,
       awayTeamId: awayId,

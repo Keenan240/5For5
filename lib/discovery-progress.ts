@@ -1,3 +1,4 @@
+import type { H2hTier } from "./h2h";
 import type { ParlayDraft, StatCategory } from "./types";
 
 export type MilestoneHit = {
@@ -7,6 +8,10 @@ export type MilestoneHit = {
   odds: number;
   buffer: number;
   score: number;
+  h2hTier?: H2hTier;
+  h2hOpponent?: string;
+  h2hGate?: string;
+  h2hLine?: string;
 };
 
 export type RankedPick = {
@@ -47,7 +52,6 @@ export type CreateProgressEvent =
       status: "qualified" | "short_log" | "no_id" | "no_milestone";
       gameCount?: number;
       milestones?: MilestoneHit[];
-      selected?: MilestoneHit;
     }
   | {
       type: "discovery_done";

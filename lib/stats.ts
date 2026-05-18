@@ -124,6 +124,7 @@ async function fetchGameLogsForType(
   return rows.map((r) => ({
     date: String(r[col("GAME_DATE")]),
     opponent: String(r[col("MATCHUP")]),
+    seasonType,
     pts: Number(r[col("PTS")]),
     reb: Number(r[col("REB")]),
     ast: Number(r[col("AST")]),
@@ -156,6 +157,7 @@ async function findNbaGameOnSlate(
 }
 
 export type PlayerLogCache = Map<string, GameLog[]>;
+export type PlayerFullLogCache = Map<string, GameLog[]>;
 
 async function fetchLast5FromNba(
   playerId: string,
@@ -167,6 +169,38 @@ async function fetchLast5FromNba(
   const last5 = combined.slice(0, 5).reverse();
   cache?.set(playerId, last5);
   return last5;
+}
+
+/** Full season log (newest first) — for H2H discovery. */
+export async function getPlayerFullGameLogs(
+  playerName: string,
+  idMap?: Map<string, string>,
+  fullCache?: PlayerFullLogCache,
+  explicitNbaId?: string
+): Promise<GameLog[]> {
+  const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
+  if (playerId && fullCache?.has(playerId)) {
+    return fullCache.get(playerId)!;
+  }
+
+  let logs: GameLog[] = [];
+  if (playerId) {
+    logs = await fetchAllGameLogs(playerId);
+    fullCache?.set(playerId, logs);
+  }
+
+  if (logs.length < 5) {
+    const espnLogs = await getLast5GamesFromEspn(playerName);
+    if (espnLogs.length > logs.length) {
+      logs = espnLogs.map((g) => ({
+        ...g,
+        seasonType: g.seasonType ?? "Regular Season",
+      }));
+      if (playerId && fullCache) fullCache.set(playerId, logs);
+    }
+  }
+
+  return logs;
 }
 
 /** Last 5 games — NBA stats when available, ESPN when NBA fails */

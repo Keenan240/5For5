@@ -34,11 +34,25 @@ import {
 
   getLast5Games,
 
+  getPlayerFullGameLogs,
+
   getPlayerId,
 
   type PlayerLogCache,
 
+  type PlayerFullLogCache,
+
 } from "./stats";
+
+import {
+  applyH2hToScore,
+  buildH2hEvaluation,
+  discoverMilestoneOnWindow,
+  formatH2hSampleLine,
+  h2hFactorForThreshold,
+} from "./h2h";
+
+import { opponentForTeam, type GameMatchup } from "./slate-games";
 
 import { mapWithConcurrency } from "./concurrency";
 import { getEspnAthleteId } from "./espn";
@@ -72,6 +86,11 @@ export type TonightPlayer = {
 export const PARLAY_LEG_COUNT = 5;
 
 const DISCOVERY_CONCURRENCY = 12;
+
+export type DiscoveryOptions = {
+  h2hMode?: boolean;
+  slateGames?: GameMatchup[];
+};
 
 
 
@@ -107,7 +126,9 @@ export async function discoverTonightCandidatesWithProgress(
 
   slate: TonightSlate,
 
-  emit?: ProgressEmitter
+  emit?: ProgressEmitter,
+
+  options: DiscoveryOptions = {}
 
 ): Promise<DiscoveryResult> {
 
@@ -123,13 +144,22 @@ export async function discoverTonightCandidatesWithProgress(
 
   const logCache: PlayerLogCache = new Map();
 
+  const fullLogCache: PlayerFullLogCache = new Map();
+
+  const discoveryOpts: DiscoveryOptions = {
+    h2hMode: options.h2hMode,
+    slateGames: options.slateGames ?? slate.games,
+  };
+
 
 
   const { candidates, withFiveGames } = await discoverFromRoster(
     roster,
     idMap,
     logCache,
-    emit
+    emit,
+    discoveryOpts,
+    fullLogCache
   );
 
   return {
@@ -154,13 +184,66 @@ type PlayerEval = {
 
   milestones: MilestoneHit[];
 
-  selected: QualifiedCandidate | null;
+  candidates: QualifiedCandidate[];
 
 };
 
 
 
+function milestoneToCandidate(
+
+  p: TonightPlayer,
+
+  m: MilestoneHit
+
+): QualifiedCandidate {
+
+  return {
+
+    player: p.player,
+
+    team: p.team,
+
+    stat: m.stat,
+
+    threshold: m.threshold,
+
+    last5: m.last5,
+
+    buffer: m.buffer,
+
+    odds: m.odds,
+
+    score: m.score,
+
+  };
+
+}
+
+
+
 async function evaluatePlayer(
+
+  p: TonightPlayer,
+
+  idMap: Map<string, string>,
+
+  logCache: PlayerLogCache,
+
+  options: DiscoveryOptions,
+
+  fullLogCache: PlayerFullLogCache
+
+): Promise<PlayerEval> {
+
+  if (options.h2hMode) {
+    return evaluatePlayerH2h(p, idMap, logCache, fullLogCache, options);
+  }
+
+  return evaluatePlayerStandard(p, idMap, logCache);
+}
+
+async function evaluatePlayerStandard(
 
   p: TonightPlayer,
 
@@ -188,17 +271,13 @@ async function evaluatePlayer(
 
       milestones: [],
 
-      selected: null,
+      candidates: [],
 
     };
 
   }
 
-
-
   const milestones: MilestoneHit[] = [];
-
-
 
   for (const stat of STAT_CATEGORIES) {
 
@@ -207,8 +286,6 @@ async function evaluatePlayer(
     const threshold = discoverMilestone(values, LADDERS[stat]);
 
     if (threshold === null) continue;
-
-
 
     const buffer = averageBuffer(values, threshold);
 
@@ -232,8 +309,6 @@ async function evaluatePlayer(
 
   }
 
-
-
   if (milestones.length === 0) {
 
     return {
@@ -246,15 +321,11 @@ async function evaluatePlayer(
 
       milestones: [],
 
-      selected: null,
+      candidates: [],
 
     };
 
   }
-
-
-
-  const best = milestones.reduce((a, b) => (a.score > b.score ? a : b));
 
   return {
 
@@ -266,25 +337,164 @@ async function evaluatePlayer(
 
     milestones,
 
-    selected: {
+    candidates: milestones.map((m) => milestoneToCandidate(p, m)),
 
-      player: p.player,
+  };
 
-      team: p.team,
+}
 
-      stat: best.stat,
+async function evaluatePlayerH2h(
 
-      threshold: best.threshold,
+  p: TonightPlayer,
 
-      last5: best.last5,
+  idMap: Map<string, string>,
 
-      buffer: best.buffer,
+  logCache: PlayerLogCache,
 
-      odds: best.odds,
+  fullLogCache: PlayerFullLogCache,
 
-      score: best.score,
+  options: DiscoveryOptions
 
-    },
+): Promise<PlayerEval> {
+
+  const fullLogs = await getPlayerFullGameLogs(
+    p.player,
+    idMap,
+    fullLogCache,
+    p.nbaPlayerId
+  );
+
+  if (fullLogs.length < 5) {
+
+    const playerId = await getPlayerId(p.player, idMap, p.nbaPlayerId);
+
+    const hasEspn = await getEspnAthleteId(p.player);
+
+    return {
+
+      player: p,
+
+      status: !playerId && !hasEspn ? "no_id" : "short_log",
+
+      gameCount: fullLogs.length,
+
+      milestones: [],
+
+      candidates: [],
+
+    };
+
+  }
+
+  const opponent = opponentForTeam(
+    p.team,
+    options.slateGames ?? []
+  );
+
+  if (!opponent) {
+    return evaluatePlayerStandard(p, idMap, logCache);
+  }
+
+  const h2h = buildH2hEvaluation(fullLogs, p.team, opponent);
+
+  if (!h2h) {
+
+    return {
+
+      player: p,
+
+      status: "no_milestone",
+
+      gameCount: fullLogs.length,
+
+      milestones: [],
+
+      candidates: [],
+
+    };
+
+  }
+
+  const milestones: MilestoneHit[] = [];
+
+  for (const stat of STAT_CATEGORIES) {
+
+    const { threshold, values } = discoverMilestoneOnWindow(
+      h2h.milestoneWindow,
+      stat
+    );
+
+    if (threshold === null) continue;
+
+    const buffer = averageBuffer(values, threshold);
+
+    const odds = estimateOddsFromBuffer(buffer, stat);
+
+    const baseScore = scoreLeg(buffer, odds);
+
+    const h2hFactor = h2hFactorForThreshold(
+      h2h.h2hSample,
+      stat,
+      threshold
+    );
+
+    const score = applyH2hToScore(baseScore, h2hFactor, h2h.h2hEmphasis);
+
+    milestones.push({
+
+      stat,
+
+      threshold,
+
+      last5: values,
+
+      buffer,
+
+      odds,
+
+      score,
+
+      h2hTier: h2h.tier,
+
+      h2hOpponent: h2h.opponent,
+
+      h2hGate: h2h.gateLabel,
+
+      h2hLine: formatH2hSampleLine(h2h.h2hSample, stat, threshold),
+
+    });
+
+  }
+
+  if (milestones.length === 0) {
+
+    return {
+
+      player: p,
+
+      status: "no_milestone",
+
+      gameCount: fullLogs.length,
+
+      milestones: [],
+
+      candidates: [],
+
+    };
+
+  }
+
+  return {
+
+    player: p,
+
+    status: "qualified",
+
+    gameCount: fullLogs.length,
+
+    milestones,
+
+    candidates: milestones.map((m) => milestoneToCandidate(p, m)),
 
   };
 
@@ -300,7 +510,11 @@ async function discoverFromRoster(
 
   logCache: PlayerLogCache,
 
-  emit?: ProgressEmitter
+  emit?: ProgressEmitter,
+
+  options: DiscoveryOptions = {},
+
+  fullLogCache: PlayerFullLogCache = new Map()
 
 ): Promise<{ candidates: QualifiedCandidate[]; withFiveGames: number }> {
   const total = roster.length;
@@ -317,7 +531,13 @@ async function discoverFromRoster(
 
     async (p) => {
 
-      const evalResult = await evaluatePlayer(p, idMap, logCache);
+      const evalResult = await evaluatePlayer(
+        p,
+        idMap,
+        logCache,
+        options,
+        fullLogCache
+      );
 
       completed++;
 
@@ -359,18 +579,6 @@ async function discoverFromRoster(
 
           evalResult.milestones.length > 0 ? evalResult.milestones : undefined,
 
-        selected: evalResult.milestones.find(
-
-          (m) =>
-
-            evalResult.selected &&
-
-            m.stat === evalResult.selected.stat &&
-
-            m.threshold === evalResult.selected.threshold
-
-        ),
-
       });
 
 
@@ -384,8 +592,7 @@ async function discoverFromRoster(
 
 
   const candidates: QualifiedCandidate[] = results
-    .map((r) => r.selected)
-    .filter((c): c is QualifiedCandidate => c !== null)
+    .flatMap((r) => r.candidates)
     .sort((a, b) => b.score - a.score);
 
   return { candidates, withFiveGames };

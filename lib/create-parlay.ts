@@ -14,6 +14,8 @@ import type { ParlayDraft, ParlayState } from "./types";
 export type CreateParlayOptions = {
   /** Subset of tonight's games to scan; default = all games on the slate. */
   includedGames?: Pick<TonightGame, "away" | "home">[];
+  /** Head-to-head playoff weighting for discovery scores and milestone windows. */
+  h2hMode?: boolean;
 };
 
 export async function parseCreateParlayRequest(
@@ -37,8 +39,14 @@ export async function parseCreateParlayRequest(
           home: g.home.toUpperCase(),
         }));
       if (includedGames.length > 0) {
-        return { includedGames };
+        return {
+          includedGames,
+          h2hMode: body?.h2hMode === true,
+        };
       }
+    }
+    if (body?.h2hMode === true) {
+      return { h2hMode: true };
     }
   } catch {
     /* empty body = all games */
@@ -117,11 +125,16 @@ export async function runCreateParlay(
 
   emit({
     type: "phase",
-    message: `Scanning ${slate.players.length} players (last 5 games via NBA or ESPN, 5/5 milestones)…`,
+    message: options.h2hMode
+      ? `Scanning ${slate.players.length} players (H2H playoff mode — tiered 5/5 + opponent weighting)…`
+      : `Scanning ${slate.players.length} players (last 5 games via NBA or ESPN, every 5/5 milestone)…`,
   });
 
   const { candidates, rosterCount, withFiveGames } =
-    await discoverTonightCandidatesWithProgress(slate, emit);
+    await discoverTonightCandidatesWithProgress(slate, emit, {
+      h2hMode: options.h2hMode,
+      slateGames: slate.games,
+    });
 
   const qualifiedCount = candidates.length;
 

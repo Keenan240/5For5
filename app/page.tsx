@@ -37,6 +37,7 @@ import {
 } from "@/lib/parlay-selection";
 import { PARLAY_LEG_COUNT } from "@/lib/scoring";
 import { BootLoader } from "@/components/boot-loader";
+import { DiscoveryInfoModal } from "@/components/discovery-info-modal";
 import { FiveForFive } from "@/components/five-for-five";
 import { formatDisplayDate, getTodayEastern } from "@/lib/dates";
 import { gameKey } from "@/lib/slate-games";
@@ -105,6 +106,9 @@ export default function Home() {
   const [deselectedGameKeys, setDeselectedGameKeys] = useState<Set<string>>(
     () => new Set()
   );
+  const [h2hMode, setH2hMode] = useState(false);
+  const [createOptsOpen, setCreateOptsOpen] = useState(false);
+  const [discoveryInfoOpen, setDiscoveryInfoOpen] = useState(false);
   const [progressLines, setProgressLines] = useState<ProgressLine[]>([]);
   const [rankedPicks, setRankedPicks] = useState<RankedPick[]>([]);
   const [draftMeta, setDraftMeta] = useState<{
@@ -344,28 +348,18 @@ export default function Home() {
         );
         break;
       case "player_result": {
-        if (event.status === "qualified" && event.selected) {
-          const label = formatMilestoneLabel(
-            event.selected.stat,
-            event.selected.threshold
-          );
-          const alt =
-            event.milestones && event.milestones.length > 1
-              ? ` · also: ${event.milestones
-                  .filter(
-                    (m) =>
-                      m.stat !== event.selected!.stat ||
-                      m.threshold !== event.selected!.threshold
-                  )
-                  .map((m) =>
-                    formatMilestoneLabel(m.stat, m.threshold)
-                  )
-                  .join(", ")}`
-              : "";
-          pushProgress(
-            `✓ ${event.player} → ${label} 5/5 [${event.selected.last5.join(", ")}]${alt}`,
-            "ok"
-          );
+        if (event.status === "qualified" && event.milestones?.length) {
+          for (const m of event.milestones) {
+            const label = formatMilestoneLabel(m.stat, m.threshold);
+            const h2h =
+              m.h2hGate && m.h2hLine
+                ? ` · ${m.h2hGate} · H2H ${m.h2hLine}${m.h2hTier ? ` · ${m.h2hTier}` : ""}`
+                : "";
+            pushProgress(
+              `✓ ${event.player} → ${label} 5/5 [${m.last5.join(", ")}] · score ${m.score.toFixed(2)}${h2h}`,
+              "ok"
+            );
+          }
         } else if (event.status === "short_log") {
           pushProgress(
             `— ${event.player}: only ${event.gameCount}/5 games`,
@@ -453,6 +447,7 @@ export default function Home() {
   }
 
   async function handleCreate() {
+    setCreateOptsOpen(false);
     setLoading("create");
     setMessage(null);
     setProgressLines([]);
@@ -474,6 +469,7 @@ export default function Home() {
             away: g.away,
             home: g.home,
           })),
+          h2hMode,
         }),
       });
 
@@ -989,12 +985,62 @@ export default function Home() {
         </section>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
-        <button
-          type="button"
-          onClick={handleCreate}
+      <div className="relative">
+        {createOptsOpen && (
+          <button
+            type="button"
+            className="fixed inset-0 z-40 cursor-default"
+            aria-label="Close options"
+            onClick={() => setCreateOptsOpen(false)}
+          />
+        )}
+        {createOptsOpen && (
+          <div
+            className="opts-menu-panel absolute bottom-full right-0 z-50 mb-2 w-56 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-2 shadow-lg ring-1 ring-black/20"
+            role="dialog"
+            aria-label="Create options"
+          >
+            <p className="px-2 pb-1 pt-1 text-[10px] font-medium uppercase tracking-wide text-[var(--text-subtle)]">
+              Discovery
+            </p>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={h2hMode}
+              onClick={() => setH2hMode((v) => !v)}
+              className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg px-2 active:bg-[var(--bg-inset)]"
+            >
+              <span className="text-left text-sm text-[var(--text)]">
+                H2H playoff mode
+              </span>
+              <span
+                className={`relative inline-flex h-7 w-12 shrink-0 rounded-full transition-colors ${
+                  h2hMode ? "bg-green-600" : "bg-[var(--border-strong)]"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                    h2hMode ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDiscoveryInfoOpen(true)}
+              className="mt-0.5 flex min-h-11 w-full items-center rounded-lg px-2 text-left text-sm text-[var(--text-muted)] active:bg-[var(--bg-inset)] hover:text-[var(--text)]"
+            >
+              More information
+            </button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-[1fr_1fr_3rem] gap-2">
+          <button
+            type="button"
+            onClick={handleCreate}
           disabled={!!loading || !!state?.pending || !!draftMeta}
-          className="min-h-12 rounded-xl bg-green-700 px-4 py-3 text-sm font-semibold text-[var(--text)] disabled:opacity-40"
+          className="min-h-12 rounded-xl bg-green-700 px-3 py-3 text-sm font-semibold text-[var(--text)] disabled:opacity-40"
         >
           {loading === "create"
             ? scanProgress.total > 0
@@ -1005,21 +1051,47 @@ export default function Home() {
               : draftMeta
                 ? "Draft ready"
                 : "Create Parlay"}
-        </button>
-        <button
-          type="button"
-          onClick={handleSettle}
-          disabled={
-            !!loading || !state?.pending || settleLock?.locked === true
-          }
-          className="min-h-12 rounded-xl bg-[var(--bg-elevated)] px-4 py-3 text-sm font-semibold text-[var(--text)] ring-1 ring-[var(--border-strong)] disabled:opacity-40"
-        >
-          {loading === "settle"
-            ? "Settling…"
-            : settleLock
-              ? settleButtonLabel(settleLock)
-              : "Settle"}
-        </button>
+          </button>
+          <button
+            type="button"
+            onClick={handleSettle}
+            disabled={
+              !!loading || !state?.pending || settleLock?.locked === true
+            }
+            className="min-h-12 rounded-xl bg-[var(--bg-elevated)] px-3 py-3 text-sm font-semibold text-[var(--text)] ring-1 ring-[var(--border-strong)] disabled:opacity-40"
+          >
+            {loading === "settle"
+              ? "Settling…"
+              : settleLock
+                ? settleButtonLabel(settleLock)
+                : "Settle"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreateOptsOpen((o) => !o)}
+            disabled={!!loading || !!state?.pending || !!draftMeta}
+            aria-expanded={createOptsOpen}
+            aria-label="Create parlay options"
+            className={`relative flex min-h-12 min-w-12 items-center justify-center rounded-xl bg-[var(--bg-elevated)] text-[var(--text-muted)] ring-1 ring-[var(--border-strong)] transition-colors disabled:opacity-40 active:bg-[var(--bg-inset)] ${
+              createOptsOpen ? "text-[var(--text)] ring-green-700/50" : ""
+            }`}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              aria-hidden
+            >
+              <circle cx="12" cy="5" r="1.75" />
+              <circle cx="12" cy="12" r="1.75" />
+              <circle cx="12" cy="19" r="1.75" />
+            </svg>
+            {h2hMode && (
+              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-green-500 ring-2 ring-[var(--bg-elevated)]" />
+            )}
+          </button>
+        </div>
       </div>
       {state?.pending && settleLock?.locked && (
         <p className="mt-2 text-center text-xs text-[var(--text-muted)]">
@@ -1096,6 +1168,10 @@ export default function Home() {
         Reset simulation
       </button>
     </main>
+      <DiscoveryInfoModal
+        open={discoveryInfoOpen}
+        onClose={() => setDiscoveryInfoOpen(false)}
+      />
     </>
   );
 }

@@ -40,6 +40,19 @@ export function filterSlateByIncludedGames(
   };
 }
 
+/** Opponent tricode for a team on tonight's included slate. */
+export function opponentForTeam(
+  teamAbbrev: string,
+  games: GameMatchup[]
+): string | null {
+  const t = teamAbbrev.toUpperCase();
+  for (const g of games) {
+    if (g.away.toUpperCase() === t) return g.home.toUpperCase();
+    if (g.home.toUpperCase() === t) return g.away.toUpperCase();
+  }
+  return null;
+}
+
 export function allGamesIncluded(
   slate: TonightSlate,
   includedGames: GameMatchup[]

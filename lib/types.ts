@@ -56,9 +56,12 @@ export type ParlayState = {
   history: SettledParlay[];
 };
 
+export type SeasonType = "Regular Season" | "Playoffs";
+
 export type GameLog = {
   date: string;
   opponent: string;
+  seasonType?: SeasonType;
   pts: number;
   reb: number;
   ast: number;

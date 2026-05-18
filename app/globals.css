@@ -44,6 +44,49 @@ body {
   animation: boot-loader-shimmer 1.2s ease-in-out infinite;
 }
 
+.info-modal-backdrop {
+  animation: info-modal-fade-in 0.2s ease-out forwards;
+}
+
+.info-modal-panel {
+  animation: info-modal-slide-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.opts-menu-panel {
+  animation: opts-menu-in 0.18s ease-out forwards;
+}
+
+@keyframes info-modal-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes info-modal-slide-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes opts-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes boot-loader-shimmer {
   0% {
     background-position: 100% 0;
