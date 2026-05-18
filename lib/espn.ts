@@ -1,4 +1,5 @@
 import { fetchJson } from "./fetch";
+import { gameLogMatchesSlateDate } from "./dates";
 import type { GameLog } from "./types";
 
 const ESPN_SEARCH =
@@ -74,8 +75,9 @@ type EspnGameLogResponse = {
   }[];
 };
 
-export async function getLast5GamesFromEspn(
-  playerName: string
+export async function getEspnGameLogs(
+  playerName: string,
+  maxGames = 20
 ): Promise<GameLog[]> {
   const athleteId = await getEspnAthleteId(playerName);
   if (!athleteId) return [];
@@ -121,7 +123,14 @@ export async function getLast5GamesFromEspn(
   }
 
   rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  return rows.slice(0, 5).reverse();
+  const recent = rows.slice(0, maxGames);
+  return recent.reverse();
+}
+
+export async function getLast5GamesFromEspn(
+  playerName: string
+): Promise<GameLog[]> {
+  return getEspnGameLogs(playerName, 5);
 }
 
 export async function getLatestGameStatFromEspn(
@@ -134,4 +143,17 @@ export async function getLatestGameStatFromEspn(
   const value = latest[statKey];
   if (typeof value !== "number") return null;
   return { value, min: latest.min };
+}
+
+export async function getGameStatFromEspnForDate(
+  playerName: string,
+  statKey: keyof GameLog,
+  slateYmd: string
+): Promise<{ value: number; min: number } | null> {
+  const logs = await getEspnGameLogs(playerName, 25);
+  const game = logs.find((g) => gameLogMatchesSlateDate(g.date, slateYmd));
+  if (!game) return null;
+  const value = game[statKey];
+  if (typeof value !== "number") return null;
+  return { value, min: game.min };
 }

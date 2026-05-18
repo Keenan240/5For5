@@ -1,9 +1,14 @@
 import { getState, storageMode } from "@/lib/kv";
+import { getSettleLockStatus } from "@/lib/settle-lock";
 import { getTonightSlate } from "@/lib/tonight";
 
 export async function GET() {
   const state = await getState();
   const slate = await getTonightSlate();
+
+  const settleLock = state.pending
+    ? await getSettleLockStatus(state.pending)
+    : null;
 
   return Response.json({
     ...state,
@@ -17,5 +22,17 @@ export async function GET() {
       source: slate.source,
       rosterSource: slate.rosterSource,
     },
+    settleLock: settleLock
+      ? {
+          locked: settleLock.locked,
+          unlockAt: settleLock.unlockAt.toISOString(),
+          unlockLabel: settleLock.unlockLabel,
+          remainingMs: settleLock.remainingMs,
+          statsReady: settleLock.statsReady,
+          allGamesFinal: settleLock.allGamesFinal,
+          usingFallbackUnlock: settleLock.usingFallbackUnlock,
+          isTodaysSlate: settleLock.isTodaysSlate,
+        }
+      : null,
   });
 }

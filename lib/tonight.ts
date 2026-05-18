@@ -65,8 +65,7 @@ function uniqueAbbrevs(games: { home: string; away: string }[]): string[] {
   return [...set];
 }
 
-export async function getTonightSlate(): Promise<TonightSlate> {
-  const date = getTodayEastern();
+export async function getSlateForDate(date: string): Promise<TonightSlate> {
   const cacheKey = `${date}-v4`;
 
   if (
@@ -90,6 +89,10 @@ export async function getTonightSlate(): Promise<TonightSlate> {
   slate = await getSlateFromNba(date);
   slateCache = { key: cacheKey, slate, at: Date.now() };
   return slate;
+}
+
+export async function getTonightSlate(): Promise<TonightSlate> {
+  return getSlateForDate(getTodayEastern());
 }
 
 /** Games from BallDontLie; rosters via NBA team endpoints (not scoreboard) */

@@ -42,7 +42,7 @@ function redisRestConfig(): { url: string; token: string } | null {
 
 let redisClient: Redis | null | undefined;
 
-function getRedis(): Redis | null {
+export function getRedis(): Redis | null {
   if (redisClient !== undefined) return redisClient;
   const config = redisRestConfig();
   if (!config) {

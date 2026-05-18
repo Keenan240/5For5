@@ -13,11 +13,14 @@ export async function POST() {
       });
     }
 
-    const lock = getSettleLockStatus(state.pending);
+    const lock = await getSettleLockStatus(state.pending);
     if (lock.locked) {
+      const error = !lock.statsReady
+        ? "Tonight's box scores aren't in the stat feed yet — won't settle on yesterday's games."
+        : `Too early to settle. Unlocks ${lock.unlockLabel}.`;
       return Response.json(
         {
-          error: `Too early to settle. Unlocks ${lock.unlockLabel}.`,
+          error,
           state,
           unlockAt: lock.unlockAt.toISOString(),
         },

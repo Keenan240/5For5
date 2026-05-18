@@ -1,9 +1,12 @@
 import type { PendingParlay } from "./types";
-import { getTodayEastern } from "./tonight";
+import { getSlateForDate, getTodayEastern } from "./tonight";
+import { getAllFinalAt, markAllFinalAt } from "./settle-timing";
+import { hasGameOnSlateDate, loadPlayerIdMap } from "./stats";
 
 const ET = "America/New_York";
 const UNLOCK_HOUR = 2;
 const UNLOCK_MINUTE = 30;
+const ALL_FINAL_BUFFER_MS = 60 * 60 * 1000;
 
 function addDaysYmd(ymd: string, days: number): string {
   const [y, m, d] = ymd.split("-").map(Number);
@@ -34,8 +37,8 @@ function getPartsInZone(date: Date, timeZone: string) {
   };
 }
 
-/** 2:30 AM ET on the morning after the slate date (stats usually posted). */
-export function getSettleUnlockAt(slateDateYmd: string): Date {
+/** 2:30 AM ET on the morning after the slate date (fallback if games linger). */
+export function getFallbackSettleUnlockAt(slateDateYmd: string): Date {
   const unlockYmd = addDaysYmd(slateDateYmd, 1);
   const [ty, tm, td] = unlockYmd.split("-").map(Number);
   const targetKey =
@@ -55,6 +58,12 @@ export function getSettleUnlockAt(slateDateYmd: string): Date {
   return new Date(hi);
 }
 
+export function isGameFinal(status: string): boolean {
+  const s = status.trim().toLowerCase();
+  if (!s) return false;
+  return /\bfinal\b/.test(s);
+}
+
 export function formatUnlockTimeEt(unlockAt: Date): string {
   return new Intl.DateTimeFormat("en-US", {
     timeZone: ET,
@@ -67,45 +76,66 @@ export function formatUnlockTimeEt(unlockAt: Date): string {
   }).format(unlockAt);
 }
 
-export function formatCountdown(remainingMs: number): string {
-  if (remainingMs <= 0) return "0:00:00";
-  const totalSec = Math.ceil(remainingMs / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
 export type SettleLockStatus = {
   locked: boolean;
   unlockAt: Date;
   unlockLabel: string;
   remainingMs: number;
   isTodaysSlate: boolean;
+  statsReady: boolean;
+  allGamesFinal: boolean;
+  usingFallbackUnlock: boolean;
 };
 
-export function getSettleLockStatus(pending: PendingParlay): SettleLockStatus {
-  const unlockAt = getSettleUnlockAt(pending.date);
-  const now = Date.now();
-  const remainingMs = Math.max(0, unlockAt.getTime() - now);
-  const isTodaysSlate = pending.date === getTodayEastern();
-
-  return {
-    locked: remainingMs > 0,
-    unlockAt,
-    unlockLabel: formatUnlockTimeEt(unlockAt),
-    remainingMs,
-    isTodaysSlate,
-  };
+async function checkStatsReady(pending: PendingParlay): Promise<boolean> {
+  const idMap = await loadPlayerIdMap();
+  const checks = await Promise.all(
+    pending.legs.map((leg) =>
+      hasGameOnSlateDate(leg.player, pending.date, idMap)
+    )
+  );
+  return checks.every(Boolean);
 }
 
-export function settleLockHint(pending: PendingParlay): string {
-  const { locked, unlockLabel, isTodaysSlate } = getSettleLockStatus(pending);
-  if (!locked) {
-    return "Games from this slate should be final — settle when FanDuel stats match.";
+export async function getSettleLockStatus(
+  pending: PendingParlay
+): Promise<SettleLockStatus> {
+  const now = Date.now();
+  const fallbackUnlock = getFallbackSettleUnlockAt(pending.date);
+  const isTodaysSlate = pending.date === getTodayEastern();
+
+  const slate = await getSlateForDate(pending.date);
+  const allGamesFinal =
+    slate.games.length > 0 &&
+    slate.games.every((g) => isGameFinal(g.status));
+
+  let unlockAt = fallbackUnlock;
+  let usingFallbackUnlock = true;
+
+  if (allGamesFinal) {
+    await markAllFinalAt(pending.date, new Date());
+    const allFinalAt = await getAllFinalAt(pending.date);
+    if (allFinalAt) {
+      const bufferUnlock = new Date(
+        allFinalAt.getTime() + ALL_FINAL_BUFFER_MS
+      );
+      unlockAt = bufferUnlock;
+      usingFallbackUnlock = false;
+    }
   }
-  if (isTodaysSlate) {
-    return `Settle unlocks ${unlockLabel} (after tonight's games wrap and stats post).`;
-  }
-  return `Settle unlocks ${unlockLabel}.`;
+
+  const statsReady = await checkStatsReady(pending);
+  const timeRemainingMs = Math.max(0, unlockAt.getTime() - now);
+  const locked = timeRemainingMs > 0 || !statsReady;
+
+  return {
+    locked,
+    unlockAt,
+    unlockLabel: formatUnlockTimeEt(unlockAt),
+    remainingMs: timeRemainingMs,
+    isTodaysSlate,
+    statsReady,
+    allGamesFinal,
+    usingFallbackUnlock,
+  };
 }

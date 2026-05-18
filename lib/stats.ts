@@ -1,5 +1,10 @@
 import { fetchJson } from "./fetch";
-import { getLast5GamesFromEspn, getLatestGameStatFromEspn } from "./espn";
+import { gameLogMatchesSlateDate } from "./dates";
+import {
+  getGameStatFromEspnForDate,
+  getLast5GamesFromEspn,
+  getLatestGameStatFromEspn,
+} from "./espn";
 import type { GameLog } from "./types";
 
 const NBA_HEADERS = {
@@ -187,6 +192,58 @@ export async function getLatestGameStat(
 }
 
 export const getLatestPlayoffStat = getLatestGameStat;
+
+async function fetchAllGameLogs(
+  playerId: string
+): Promise<GameLog[]> {
+  const [regular, playoffs] = await Promise.all([
+    fetchGameLogsForType(playerId, "Regular Season"),
+    fetchGameLogsForType(playerId, "Playoffs"),
+  ]);
+  return [...regular, ...playoffs].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  );
+}
+
+/** Stat from the game on slateYmd only — never yesterday's row. */
+export async function getGameStatForDate(
+  playerName: string,
+  statKey: keyof GameLog,
+  slateYmd: string,
+  idMap?: Map<string, string>,
+  explicitNbaId?: string
+): Promise<{ value: number; min: number } | null> {
+  const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
+
+  if (playerId) {
+    const logs = await fetchAllGameLogs(playerId);
+    const game = logs.find((g) => gameLogMatchesSlateDate(g.date, slateYmd));
+    if (game) {
+      const value = game[statKey as keyof GameLog];
+      if (typeof value === "number") {
+        return { value, min: game.min };
+      }
+    }
+  }
+
+  return getGameStatFromEspnForDate(playerName, statKey, slateYmd);
+}
+
+export async function hasGameOnSlateDate(
+  playerName: string,
+  slateYmd: string,
+  idMap?: Map<string, string>,
+  explicitNbaId?: string
+): Promise<boolean> {
+  const stat = await getGameStatForDate(
+    playerName,
+    "pts",
+    slateYmd,
+    idMap,
+    explicitNbaId
+  );
+  return stat !== null;
+}
 
 function parseMinutes(min: string): number {
   if (!min || min === "DNP") return 0;

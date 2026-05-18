@@ -37,11 +37,8 @@ import {
 } from "@/lib/parlay-selection";
 import { PARLAY_LEG_COUNT } from "@/lib/scoring";
 import { FiveForFive } from "@/components/five-for-five";
-import {
-  formatCountdown,
-  getSettleLockStatus,
-  settleLockHint,
-} from "@/lib/settle-lock";
+import { formatDisplayDate, getTodayEastern } from "@/lib/dates";
+import { formatCountdown, settleLockHint } from "@/lib/settle-lock-ui";
 
 type SlateInfo = {
   date: string;
@@ -51,10 +48,22 @@ type SlateInfo = {
   rosterSource?: string;
 };
 
+type SettleLockInfo = {
+  locked: boolean;
+  unlockAt: string;
+  unlockLabel: string;
+  remainingMs: number;
+  statsReady: boolean;
+  allGamesFinal: boolean;
+  usingFallbackUnlock: boolean;
+  isTodaysSlate: boolean;
+};
+
 type StatusResponse = ParlayState & {
   qualifiedCount?: number;
   sliderMax?: number;
   slate?: SlateInfo;
+  settleLock?: SettleLockInfo | null;
 };
 
 type ProgressLine = {
@@ -90,15 +99,24 @@ export default function Home() {
   const progressEndRef = useRef<HTMLDivElement>(null);
 
   const settleLock = useMemo(() => {
-    if (!state?.pending) return null;
-    return getSettleLockStatus(state.pending);
-  }, [state?.pending, clockMs]);
+    const raw = state?.settleLock;
+    if (!raw) return null;
+    const unlockAt = new Date(raw.unlockAt);
+    const timeRemainingMs = Math.max(0, unlockAt.getTime() - clockMs);
+    const locked = timeRemainingMs > 0 || !raw.statsReady;
+    return {
+      ...raw,
+      unlockAt,
+      remainingMs: timeRemainingMs,
+      locked,
+    };
+  }, [state?.settleLock, clockMs]);
 
   useEffect(() => {
-    if (!settleLock?.locked) return;
-    const id = setInterval(() => setClockMs(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [settleLock?.locked]);
+    if (!state?.pending) return;
+    const tick = setInterval(() => setClockMs(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [state?.pending]);
 
   function collapseScanSections() {
     setShowScanReport(false);
@@ -162,6 +180,14 @@ export default function Home() {
   }, [fetchStatus]);
 
   useEffect(() => {
+    if (!state?.pending || !settleLock?.locked) return;
+    const id = setInterval(() => {
+      void fetchStatus();
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [state?.pending, settleLock?.locked, fetchStatus]);
+
+  useEffect(() => {
     if (!historyOpen) return;
     const onScroll = () => {
       if (window.scrollY < 48) {
@@ -185,6 +211,13 @@ export default function Home() {
       : "0.0";
   const roiPositive = state != null && state.bankroll >= 200;
 
+  const parlayRecord = useMemo(() => {
+    if (!state?.history.length) return null;
+    const wins = state.history.filter((h) => h.result === "win").length;
+    const losses = state.history.length - wins;
+    return { wins, losses };
+  }, [state?.history]);
+
   function pushProgress(text: string, kind: ProgressLine["kind"] = "info") {
     progressId += 1;
     setProgressLines((prev) => [...prev, { id: progressId, text, kind }]);
@@ -197,7 +230,7 @@ export default function Home() {
         break;
       case "slate":
         pushProgress(
-          `Slate ${event.date}: ${event.games.join(" · ")} · ${event.rosterCount} players (${event.rosterSource ?? "?"})`,
+          `Slate ${formatDisplayDate(event.date)}: ${event.games.join(" · ")} · ${event.rosterCount} players (${event.rosterSource ?? "?"})`,
           "info"
         );
         setScanProgress({ index: 0, total: event.rosterCount });
@@ -426,12 +459,13 @@ export default function Home() {
   }
 
   async function handleSettle() {
-    if (state?.pending) {
-      const lock = getSettleLockStatus(state.pending);
-      if (lock.locked) {
-        setMessage(`Too early to settle. Unlocks ${lock.unlockLabel}.`);
-        return;
-      }
+    if (settleLock?.locked) {
+      setMessage(
+        !settleLock.statsReady
+          ? "Tonight's box scores aren't in the stat feed yet."
+          : `Too early to settle. Unlocks ${settleLock.unlockLabel}.`
+      );
+      return;
     }
 
     setLoading("settle");
@@ -498,11 +532,7 @@ export default function Home() {
     }
   }
 
-  const today = new Date().toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const today = formatDisplayDate(getTodayEastern());
 
   return (
     <main className="mx-auto max-w-md px-4 pb-10 pt-6">
@@ -518,6 +548,19 @@ export default function Home() {
           <p className="text-4xl font-semibold text-[var(--text)]">
             ${state?.bankroll.toFixed(2) ?? "—"}
           </p>
+          {parlayRecord && (
+            <p className="mt-2 text-sm text-[var(--text-muted)]">
+              {parlayRecord.wins}–{parlayRecord.losses} W–L
+              {parlayRecord.losses > 0 && (
+                <span className="text-[var(--text-subtle)]">
+                  {" "}
+                  (
+                  {(parlayRecord.wins / parlayRecord.losses).toFixed(1)}
+                  :1)
+                </span>
+              )}
+            </p>
+          )}
           <p
             className={`mt-1 text-sm ${roiPositive ? "text-green-400" : "text-red-400"}`}
           >
@@ -580,7 +623,7 @@ export default function Home() {
 
       {state?.slate && (
         <CollapsiblePanel
-          title={`Tonight · ${state.slate.date}`}
+          title={`Tonight · ${formatDisplayDate(state.slate.date)}`}
           subtitle={`${state.slate.games.length} games`}
           open={showSlate}
           onToggle={() => setShowSlate((v) => !v)}
@@ -624,7 +667,7 @@ export default function Home() {
         <section className="mb-4 rounded-xl border border-green-800/50 bg-[var(--bg-card)] p-4">
           <div className="mb-3 flex items-center justify-between">
             <p className="text-xs font-medium uppercase tracking-wide text-green-500">
-              Ready to place · {draftMeta.date}
+              Ready to place · {formatDisplayDate(draftMeta.date)}
             </p>
             <span className="text-xs text-[var(--text-muted)]">
               {selectedCount}/{PARLAY_LEG_COUNT} legs · {draftMeta.confidence}
@@ -744,10 +787,10 @@ export default function Home() {
       {state?.pending && (
         <section className="mb-4 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] p-4">
           <p className="mb-1 text-xs font-medium uppercase tracking-wide text-yellow-500">
-            Pending — {state.pending.date}
+            Pending — {formatDisplayDate(state.pending.date)}
           </p>
           <p className="mb-3 text-xs leading-relaxed text-[var(--text-subtle)]">
-            {settleLockHint(state.pending)}
+            {settleLock ? settleLockHint(settleLock) : ""}
           </p>
           <PendingCard parlay={state.pending} />
         </section>
@@ -1038,7 +1081,9 @@ function HistoryCard({
           onClick={onToggle}
           className="flex min-h-11 min-w-0 flex-1 items-center justify-between px-3 py-2.5 text-left"
         >
-          <span className="text-sm text-[var(--text)]">{parlay.date}</span>
+          <span className="text-sm text-[var(--text)]">
+            {formatDisplayDate(parlay.date)}
+          </span>
           <span className="flex shrink-0 items-center gap-2">
             <span
               className={`rounded px-2 py-0.5 text-[10px] font-medium uppercase ${win ? "bg-green-900/80 text-green-400" : "bg-red-900/80 text-red-400"}`}

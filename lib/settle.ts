@@ -1,5 +1,6 @@
 import { STAT_KEY } from "./milestones";
-import { getLatestGameStat, loadPlayerIdMap } from "./stats";
+import { formatDisplayDate } from "./dates";
+import { getGameStatForDate, loadPlayerIdMap } from "./stats";
 import { calcPayout, roundMoney } from "./odds";
 import type { ParlayState, SettledParlay, SettledLeg } from "./types";
 
@@ -15,7 +16,12 @@ export async function settlePending(state: ParlayState): Promise<{
   const settledLegs: SettledLeg[] = await Promise.all(
     pending.legs.map(async (leg) => {
       const key = STAT_KEY[leg.stat];
-      const latest = await getLatestGameStat(leg.player, key, idMap);
+      const latest = await getGameStatForDate(
+        leg.player,
+        key,
+        pending.date,
+        idMap
+      );
       const actualValue = latest?.value ?? 0;
       const hit = actualValue >= leg.threshold;
       return {
@@ -68,7 +74,7 @@ export async function settlePending(state: ParlayState): Promise<{
     .join("\n");
 
   const summary = [
-    `${allHit ? "WIN" : "LOSS"} — ${pending.date}`,
+    `${allHit ? "WIN" : "LOSS"} — ${formatDisplayDate(pending.date)}`,
     legLines,
     allHit
       ? `Stake $${pending.stake} → Payout $${payout} (+$${profit})`
