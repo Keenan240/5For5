@@ -14,8 +14,13 @@ export async function GET() {
   }
 
   const pending = state.pending;
+  const legsForCheck = pending.legs.map((leg) => ({
+    player: leg.player,
+    stat: leg.stat,
+    threshold: leg.threshold,
+  }));
   const { ready, legs } = await checkAllLegsStatsReady(
-    pending.legs,
+    legsForCheck,
     pending.date
   );
   const lock = await getSettleLockStatus(pending);
@@ -28,10 +33,13 @@ export async function GET() {
     locked: lock.locked,
     legs: legs.map((l) => ({
       player: l.player,
+      stat: l.stat,
+      threshold: l.threshold,
       ready: l.ready,
       source: l.source,
       matchedDate: l.matchedDate,
-      pts: l.pts,
+      actualValue: l.actualValue,
+      hit: l.hit,
       error: l.error,
     })),
     pendingLegs: pending.legs.map((leg) => ({

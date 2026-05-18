@@ -107,8 +107,13 @@ export async function getSettleLockStatus(
 
   const deferredUntil = await getSettleDeferredUntil(pending.date);
   if (deferredUntil && now < deferredUntil.getTime()) {
+    const legsForCheck = pending.legs.map((leg) => ({
+      player: leg.player,
+      stat: leg.stat,
+      threshold: leg.threshold,
+    }));
     const { ready: statsReady, legs: legsStats } =
-      await checkAllLegsStatsReady(pending.legs, pending.date);
+      await checkAllLegsStatsReady(legsForCheck, pending.date);
     const remainingMs = deferredUntil.getTime() - now;
     return {
       locked: true,
@@ -125,8 +130,13 @@ export async function getSettleLockStatus(
     };
   }
 
+  const legsForCheck = pending.legs.map((leg) => ({
+    player: leg.player,
+    stat: leg.stat,
+    threshold: leg.threshold,
+  }));
   const { ready: statsReady, legs: legsStats } =
-    await checkAllLegsStatsReady(pending.legs, pending.date);
+    await checkAllLegsStatsReady(legsForCheck, pending.date);
 
   if (statsReady) {
     return {

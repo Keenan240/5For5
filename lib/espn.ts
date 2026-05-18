@@ -68,29 +68,62 @@ function parseMinutes(min: string): number {
 }
 
 type EspnGameLogResponse = {
-  names: string[];
-  events: Record<string, { gameDate?: string; gameId?: string }>;
+  names?: string[];
+  labels?: string[];
+  events?: Record<string, { gameDate?: string; gameId?: string }>;
   seasonTypes?: {
     displayName?: string;
-    categories?: { events?: { eventId: string; stats: string[] }[] }[];
+    categories?: { events?: { eventId: string; stats?: string[] }[] }[];
   }[];
 };
 
-function parseEspnGamelogResponse(data: EspnGameLogResponse): GameLog[] {
-  const { names, events, seasonTypes } = data;
+function statCol(names: string[], ...candidates: string[]): number {
+  for (const c of candidates) {
+    const i = names.indexOf(c);
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+function statVal(stats: string[] | undefined, col: number): string {
+  if (!stats || col < 0 || col >= stats.length) return "";
+  return stats[col] ?? "";
+}
+
+function parseEspnGamelogResponse(data: unknown): GameLog[] {
+  if (!data || typeof data !== "object") return [];
+
+  const body = data as EspnGameLogResponse;
+  const names = Array.isArray(body.names)
+    ? body.names
+    : Array.isArray(body.labels)
+      ? body.labels
+      : null;
+
+  if (!names?.length) return [];
+
+  const events = body.events ?? {};
+  const seasonTypes = body.seasonTypes ?? [];
+
   const idx = {
-    min: names.indexOf("minutes"),
-    pts: names.indexOf("points"),
-    reb: names.indexOf("totalRebounds"),
-    ast: names.indexOf("assists"),
-    stl: names.indexOf("steals"),
-    blk: names.indexOf("blocks"),
-    fg3: names.indexOf("threePointFieldGoalsMade-threePointFieldGoalsAttempted"),
+    min: statCol(names, "minutes"),
+    pts: statCol(names, "points"),
+    reb: statCol(names, "totalRebounds", "rebounds"),
+    ast: statCol(names, "assists"),
+    stl: statCol(names, "steals"),
+    blk: statCol(names, "blocks"),
+    fg3: statCol(
+      names,
+      "threePointFieldGoalsMade-threePointFieldGoalsAttempted",
+      "threePointFieldGoalsMade"
+    ),
   };
+
+  if (idx.pts < 0) return [];
 
   const rows: GameLog[] = [];
 
-  for (const st of seasonTypes ?? []) {
+  for (const st of seasonTypes) {
     for (const cat of st.categories ?? []) {
       for (const e of cat.events ?? []) {
         const meta = events[e.eventId];
@@ -99,13 +132,13 @@ function parseEspnGamelogResponse(data: EspnGameLogResponse): GameLog[] {
         rows.push({
           date: meta.gameDate,
           opponent: st.displayName ?? "",
-          pts: Number(s[idx.pts]) || 0,
-          reb: Number(s[idx.reb]) || 0,
-          ast: Number(s[idx.ast]) || 0,
-          fg3m: idx.fg3 >= 0 ? parseMade(s[idx.fg3]) : 0,
-          stl: Number(s[idx.stl]) || 0,
-          blk: Number(s[idx.blk]) || 0,
-          min: idx.min >= 0 ? parseMinutes(s[idx.min]) : 0,
+          pts: Number(statVal(s, idx.pts)) || 0,
+          reb: Number(statVal(s, idx.reb)) || 0,
+          ast: Number(statVal(s, idx.ast)) || 0,
+          fg3m: idx.fg3 >= 0 ? parseMade(statVal(s, idx.fg3)) : 0,
+          stl: Number(statVal(s, idx.stl)) || 0,
+          blk: Number(statVal(s, idx.blk)) || 0,
+          min: idx.min >= 0 ? parseMinutes(statVal(s, idx.min)) : 0,
         });
       }
     }
@@ -121,10 +154,15 @@ async function fetchEspnGameLogsForSeason(
   maxGames: number
 ): Promise<GameLog[]> {
   const url = `${ESPN_GAMELOG}/${athleteId}/gamelog?season=${season}`;
-  const result = await fetchJson<EspnGameLogResponse>(url, undefined, 15_000);
+  const result = await fetchJson<unknown>(url, undefined, 15_000);
   if (!result.ok || !result.data) return [];
-  const rows = parseEspnGamelogResponse(result.data);
-  return rows.slice(0, maxGames).reverse();
+
+  try {
+    const rows = parseEspnGamelogResponse(result.data);
+    return rows.slice(0, maxGames).reverse();
+  } catch {
+    return [];
+  }
 }
 
 export async function getEspnGameLogs(

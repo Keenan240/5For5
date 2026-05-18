@@ -1,13 +1,13 @@
 import { fetchJson } from "./fetch";
 import { pickBestSlateGame } from "./dates";
 import {
-  findEspnGameOnSlate,
   getGameStatFromEspnForDate,
   getLast5GamesFromEspn,
   getLatestGameStatFromEspn,
 } from "./espn";
+import { STAT_KEY } from "./milestones";
 import { cachedFetch } from "./stats-cache";
-import type { GameLog } from "./types";
+import type { GameLog, StatCategory } from "./types";
 
 const NBA_HEADERS = {
   "User-Agent":
@@ -24,10 +24,19 @@ type SeasonType = "Regular Season" | "Playoffs";
 export type SlateGameResolution = {
   ready: boolean;
   player: string;
+  stat: StatCategory;
+  threshold: number;
   source: "nba" | "espn" | null;
   matchedDate: string | null;
-  pts: number | null;
+  actualValue: number | null;
+  hit: boolean | null;
   error?: string;
+};
+
+export type LegForSlateCheck = {
+  player: string;
+  stat: StatCategory;
+  threshold: number;
 };
 
 function seasonLabel(): string {
@@ -211,54 +220,51 @@ export async function getLatestGameStat(
 
 export const getLatestPlayoffStat = getLatestGameStat;
 
-/** NBA + ESPN in parallel; prefers exact slate date, allows ±1 day. */
-export async function resolveGameOnSlate(
-  playerName: string,
+/** NBA + ESPN in parallel for the leg's milestone stat on the slate date. */
+export async function resolveLegOnSlate(
+  leg: LegForSlateCheck,
   slateYmd: string,
   idMap?: Map<string, string>,
   explicitNbaId?: string
 ): Promise<SlateGameResolution> {
-  const cacheKey = `slate:${normalizeName(playerName)}:${slateYmd}`;
+  const statKey = STAT_KEY[leg.stat];
+  const cacheKey = `leg:${normalizeName(leg.player)}:${slateYmd}:${leg.stat}`;
   return cachedFetch(cacheKey, async () => {
-    const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
+    const base = {
+      player: leg.player,
+      stat: leg.stat,
+      threshold: leg.threshold,
+    };
 
-    const [nbaHit, espnHit] = await Promise.all([
-      playerId
-        ? findNbaGameOnSlate(playerId, slateYmd).catch(() => null)
-        : Promise.resolve(null),
-      findEspnGameOnSlate(playerName, slateYmd).catch(() => null),
-    ]);
+    const playerId = await getPlayerId(leg.player, idMap, explicitNbaId);
+    const statHit = await getGameStatForDate(
+      leg.player,
+      statKey,
+      slateYmd,
+      idMap,
+      explicitNbaId
+    );
 
-    const pick =
-      nbaHit && espnHit
-        ? nbaHit.matchedYmd === slateYmd
-          ? { ...nbaHit, source: "nba" as const }
-          : espnHit.matchedYmd === slateYmd
-            ? { ...espnHit, source: "espn" as const }
-            : { ...nbaHit, source: "nba" as const }
-        : nbaHit
-          ? { ...nbaHit, source: "nba" as const }
-          : espnHit
-            ? { ...espnHit, source: "espn" as const }
-            : null;
-
-    if (!pick) {
+    if (!statHit) {
       return {
+        ...base,
         ready: false,
-        player: playerName,
         source: null,
         matchedDate: null,
-        pts: null,
+        actualValue: null,
+        hit: null,
         error: playerId ? "no_slate_game_in_feeds" : "player_not_found",
       };
     }
 
+    const actualValue = statHit.value;
     return {
+      ...base,
       ready: true,
-      player: playerName,
-      source: pick.source,
-      matchedDate: pick.matchedYmd,
-      pts: pick.game.pts,
+      source: statHit.source,
+      matchedDate: statHit.matchedYmd,
+      actualValue,
+      hit: actualValue >= leg.threshold,
     };
   });
 }
@@ -269,7 +275,12 @@ export async function getGameStatForDate(
   slateYmd: string,
   idMap?: Map<string, string>,
   explicitNbaId?: string
-): Promise<{ value: number; min: number; matchedYmd: string } | null> {
+): Promise<{
+  value: number;
+  min: number;
+  matchedYmd: string;
+  source: "nba" | "espn";
+} | null> {
   const cacheKey = `stat:${normalizeName(playerName)}:${slateYmd}:${statKey}`;
   return cachedFetch(cacheKey, async () => {
     const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
@@ -307,33 +318,19 @@ export async function getGameStatForDate(
       value: pick.value,
       min: pick.min,
       matchedYmd: pick.matchedYmd,
+      source: pick.source,
     };
   });
 }
 
-export async function hasGameOnSlateDate(
-  playerName: string,
-  slateYmd: string,
-  idMap?: Map<string, string>,
-  explicitNbaId?: string
-): Promise<boolean> {
-  const res = await resolveGameOnSlate(
-    playerName,
-    slateYmd,
-    idMap,
-    explicitNbaId
-  );
-  return res.ready;
-}
-
 export async function checkAllLegsStatsReady(
-  legs: { player: string }[],
+  legs: LegForSlateCheck[],
   slateYmd: string,
   idMap?: Map<string, string>
 ): Promise<{ ready: boolean; legs: SlateGameResolution[] }> {
   const map = idMap ?? (await loadPlayerIdMap());
   const legResults = await Promise.all(
-    legs.map((leg) => resolveGameOnSlate(leg.player, slateYmd, map))
+    legs.map((leg) => resolveLegOnSlate(leg, slateYmd, map))
   );
   return {
     ready: legResults.every((r) => r.ready),

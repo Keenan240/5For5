@@ -52,10 +52,13 @@ type SlateInfo = {
 
 type LegStatInfo = {
   player: string;
+  stat: ParlayLeg["stat"];
+  threshold: number;
   ready: boolean;
   source: string | null;
   matchedDate: string | null;
-  pts: number | null;
+  actualValue: number | null;
+  hit: boolean | null;
   error?: string;
 };
 
@@ -695,6 +698,13 @@ export default function Home() {
                       }
                       onDelete={() => handleDeleteHistory(historyIndex)}
                       deleteDisabled={!!loading}
+                      onRevert={
+                        !state?.pending &&
+                        historyIndex === (state?.history.length ?? 0) - 1
+                          ? handleRevertSettle
+                          : undefined
+                      }
+                      revertDisabled={loading === "revert"}
                     />
                   );
                 })}
@@ -891,15 +901,27 @@ export default function Home() {
           {settleLock?.legsStats && settleLock.legsStats.length > 0 && (
             <ul className="mb-3 space-y-1 text-[11px] text-[var(--text-muted)]">
               {settleLock.legsStats.map((leg) => (
-                <li key={leg.player} className="flex justify-between gap-2">
-                  <span>{leg.player}</span>
+                <li
+                  key={`${leg.player}-${leg.stat}`}
+                  className="flex justify-between gap-2"
+                >
+                  <span>
+                    {leg.player}{" "}
+                    <span className="text-[var(--text-subtle)]">
+                      {formatMilestoneLabel(leg.stat, leg.threshold)}
+                    </span>
+                  </span>
                   <span
                     className={
-                      leg.ready ? "text-green-400" : "text-amber-400/90"
+                      leg.ready
+                        ? leg.hit
+                          ? "text-green-400"
+                          : "text-red-400"
+                        : "text-amber-400/90"
                     }
                   >
-                    {leg.ready
-                      ? `${leg.source ?? "?"} · ${leg.matchedDate}${leg.pts != null ? ` · ${leg.pts} pts` : ""}`
+                    {leg.ready && leg.actualValue != null
+                      ? `got ${leg.actualValue} · ${leg.source ?? "?"}`
                       : leg.error === "player_not_found"
                         ? "not found in feed"
                         : "no box score yet"}
@@ -948,17 +970,6 @@ export default function Home() {
         <p className="mt-2 text-center text-xs text-[var(--text-muted)]">
           {settleLockHint(settleLock)}
         </p>
-      )}
-
-      {!state?.pending && (state?.history.length ?? 0) > 0 && (
-        <button
-          type="button"
-          onClick={handleRevertSettle}
-          disabled={!!loading}
-          className="mb-4 w-full rounded-xl border border-amber-800/60 bg-amber-950/30 px-4 py-3 text-sm font-medium text-amber-200/90 disabled:opacity-40"
-        >
-          {loading === "revert" ? "Reverting…" : "Revert last settle"}
-        </button>
       )}
 
       {progressLines.length > 0 && (
@@ -1190,12 +1201,16 @@ function HistoryCard({
   onToggle,
   onDelete,
   deleteDisabled,
+  onRevert,
+  revertDisabled,
 }: {
   parlay: SettledParlay;
   expanded: boolean;
   onToggle: () => void;
   onDelete: () => void;
   deleteDisabled?: boolean;
+  onRevert?: () => void;
+  revertDisabled?: boolean;
 }) {
   const win = parlay.result === "win";
   return (
@@ -1222,6 +1237,20 @@ function HistoryCard({
             </span>
           </span>
         </button>
+        {onRevert && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRevert();
+            }}
+            disabled={revertDisabled}
+            className="border-l border-[var(--border-strong)] px-3 text-xs text-[var(--text-faint)] hover:text-amber-300 disabled:opacity-40"
+            aria-label="Revert last settle"
+          >
+            {revertDisabled ? "…" : "Revert"}
+          </button>
+        )}
         <button
           type="button"
           onClick={(e) => {
