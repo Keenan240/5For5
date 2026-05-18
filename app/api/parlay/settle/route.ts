@@ -1,5 +1,5 @@
 import { getState, setState } from "@/lib/kv";
-import { getSettleLockStatus } from "@/lib/settle-lock";
+import { clearSettleLockForDate, getSettleLockStatus } from "@/lib/settle-lock";
 import { settlePending } from "@/lib/settle";
 
 export async function POST() {
@@ -29,6 +29,7 @@ export async function POST() {
     }
 
     const { state: newState, summary } = await settlePending(state);
+    await clearSettleLockForDate(state.pending.date);
     await setState(newState);
 
     return Response.json({

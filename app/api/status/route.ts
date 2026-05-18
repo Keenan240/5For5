@@ -32,6 +32,7 @@ export async function GET() {
           allGamesFinal: settleLock.allGamesFinal,
           usingFallbackUnlock: settleLock.usingFallbackUnlock,
           isTodaysSlate: settleLock.isTodaysSlate,
+          deferredAfterRevert: settleLock.deferredAfterRevert,
         }
       : null,
   });

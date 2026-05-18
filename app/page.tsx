@@ -57,6 +57,7 @@ type SettleLockInfo = {
   allGamesFinal: boolean;
   usingFallbackUnlock: boolean;
   isTodaysSlate: boolean;
+  deferredAfterRevert?: boolean;
 };
 
 type StatusResponse = ParlayState & {
@@ -458,6 +459,27 @@ export default function Home() {
     }
   }
 
+  async function handleRevertSettle() {
+    if (
+      !confirm(
+        "Revert the last settled parlay? It will return to pending, bankroll will be restored, and settle will stay locked until tomorrow morning (2:30 AM ET)."
+      )
+    ) {
+      return;
+    }
+    setLoading("revert");
+    setMessage(null);
+    try {
+      const res = await fetch("/api/parlay/revert-settle", { method: "POST" });
+      const data = await res.json();
+      if (data.message) setMessage(data.message);
+      if (data.error) setMessage(data.error);
+      await fetchStatus();
+    } finally {
+      setLoading(null);
+    }
+  }
+
   async function handleSettle() {
     if (settleLock?.locked) {
       setMessage(
@@ -830,11 +852,33 @@ export default function Home() {
       </div>
       {state?.pending && settleLock?.locked && (
         <p className="mt-2 text-center text-xs text-[var(--text-muted)]">
-          Settle unlocks{" "}
-          <span className="font-medium text-[var(--text)]">
-            {settleLock.unlockLabel}
-          </span>
+          {settleLock.deferredAfterRevert ? (
+            <>
+              Reverted — settle again{" "}
+              <span className="font-medium text-[var(--text)]">
+                {settleLock.unlockLabel}
+              </span>
+            </>
+          ) : (
+            <>
+              Settle unlocks{" "}
+              <span className="font-medium text-[var(--text)]">
+                {settleLock.unlockLabel}
+              </span>
+            </>
+          )}
         </p>
+      )}
+
+      {!state?.pending && (state?.history.length ?? 0) > 0 && (
+        <button
+          type="button"
+          onClick={handleRevertSettle}
+          disabled={!!loading}
+          className="mb-4 w-full rounded-xl border border-amber-800/60 bg-amber-950/30 px-4 py-3 text-sm font-medium text-amber-200/90 disabled:opacity-40"
+        >
+          {loading === "revert" ? "Reverting…" : "Revert last settle"}
+        </button>
       )}
 
       {progressLines.length > 0 && (

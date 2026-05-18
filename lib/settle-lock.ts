@@ -1,14 +1,16 @@
 import type { PendingParlay } from "./types";
 import { getSlateForDate, getTodayEastern } from "./tonight";
-import { getAllFinalAt, markAllFinalAt } from "./settle-timing";
+import {
+  clearSettleDeferredUntil,
+  getSettleDeferredUntil,
+} from "./settle-timing";
 import { hasGameOnSlateDate, loadPlayerIdMap } from "./stats";
 
 const ET = "America/New_York";
 const UNLOCK_HOUR = 2;
 const UNLOCK_MINUTE = 30;
-const ALL_FINAL_BUFFER_MS = 60 * 60 * 1000;
 
-function addDaysYmd(ymd: string, days: number): string {
+export function addDaysYmd(ymd: string, days: number): string {
   const [y, m, d] = ymd.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0));
   return dt.toISOString().slice(0, 10);
@@ -85,6 +87,7 @@ export type SettleLockStatus = {
   statsReady: boolean;
   allGamesFinal: boolean;
   usingFallbackUnlock: boolean;
+  deferredAfterRevert: boolean;
 };
 
 async function checkStatsReady(pending: PendingParlay): Promise<boolean> {
@@ -104,38 +107,77 @@ export async function getSettleLockStatus(
   const fallbackUnlock = getFallbackSettleUnlockAt(pending.date);
   const isTodaysSlate = pending.date === getTodayEastern();
 
+  const deferredUntil = await getSettleDeferredUntil(pending.date);
+  if (deferredUntil && now < deferredUntil.getTime()) {
+    const statsReady = await checkStatsReady(pending);
+    const remainingMs = deferredUntil.getTime() - now;
+    return {
+      locked: true,
+      unlockAt: deferredUntil,
+      unlockLabel: formatUnlockTimeEt(deferredUntil),
+      remainingMs,
+      isTodaysSlate,
+      statsReady,
+      allGamesFinal: false,
+      usingFallbackUnlock: true,
+      deferredAfterRevert: true,
+    };
+  }
+
   const slate = await getSlateForDate(pending.date);
   const allGamesFinal =
     slate.games.length > 0 &&
     slate.games.every((g) => isGameFinal(g.status));
+  const statsReady = await checkStatsReady(pending);
 
-  let unlockAt = fallbackUnlock;
-  let usingFallbackUnlock = true;
+  const canSettleNow = allGamesFinal && statsReady;
+  const canSettleFallback = now >= fallbackUnlock.getTime() && statsReady;
+  const locked = !canSettleNow && !canSettleFallback;
 
-  if (allGamesFinal) {
-    await markAllFinalAt(pending.date, new Date());
-    const allFinalAt = await getAllFinalAt(pending.date);
-    if (allFinalAt) {
-      const bufferUnlock = new Date(
-        allFinalAt.getTime() + ALL_FINAL_BUFFER_MS
-      );
-      unlockAt = bufferUnlock;
+  let unlockAt: Date;
+  let usingFallbackUnlock: boolean;
+
+  if (locked) {
+    if (!allGamesFinal) {
+      unlockAt = fallbackUnlock;
+      usingFallbackUnlock = true;
+    } else {
+      unlockAt = new Date(now);
       usingFallbackUnlock = false;
     }
+  } else if (canSettleNow) {
+    unlockAt = new Date(now);
+    usingFallbackUnlock = false;
+  } else {
+    unlockAt = fallbackUnlock;
+    usingFallbackUnlock = true;
   }
 
-  const statsReady = await checkStatsReady(pending);
-  const timeRemainingMs = Math.max(0, unlockAt.getTime() - now);
-  const locked = timeRemainingMs > 0 || !statsReady;
+  const remainingMs = locked ? Math.max(0, unlockAt.getTime() - now) : 0;
 
   return {
     locked,
     unlockAt,
     unlockLabel: formatUnlockTimeEt(unlockAt),
-    remainingMs: timeRemainingMs,
+    remainingMs,
     isTodaysSlate,
     statsReady,
     allGamesFinal,
     usingFallbackUnlock,
+    deferredAfterRevert: false,
   };
+}
+
+/** Next 2:30 AM ET unlock at or after now (used after revert). */
+export function getNextMorningSettleUnlock(slateDateYmd: string): Date {
+  for (let extra = 0; extra < 5; extra++) {
+    const unlock = getFallbackSettleUnlockAt(addDaysYmd(slateDateYmd, extra));
+    if (unlock.getTime() > Date.now()) return unlock;
+  }
+  return getFallbackSettleUnlockAt(addDaysYmd(slateDateYmd, 4));
+}
+
+/** Call after a successful settle so a prior revert deferral does not block. */
+export async function clearSettleLockForDate(slateDate: string): Promise<void> {
+  await clearSettleDeferredUntil(slateDate);
 }

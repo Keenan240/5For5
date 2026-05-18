@@ -5,6 +5,7 @@ export type SettleLockView = {
   allGamesFinal: boolean;
   usingFallbackUnlock: boolean;
   isTodaysSlate: boolean;
+  deferredAfterRevert?: boolean;
 };
 
 export function formatCountdown(remainingMs: number): string {
@@ -17,17 +18,20 @@ export function formatCountdown(remainingMs: number): string {
 }
 
 export function settleLockHint(lock: SettleLockView): string {
+  if (lock.deferredAfterRevert) {
+    return `Settle deferred until ${lock.unlockLabel} after revert — try again tomorrow morning.`;
+  }
   if (!lock.statsReady) {
     return "Waiting for tonight's box scores in the stat feed — won't settle on yesterday's games.";
   }
   if (!lock.locked) {
-    return "Games from this slate should be final — settle when FanDuel stats match.";
+    return "All games final with stats in — settle when FanDuel matches.";
   }
-  if (lock.allGamesFinal && !lock.usingFallbackUnlock) {
-    return `All games final — settle unlocks ${lock.unlockLabel} (60 min buffer for stats).`;
+  if (!lock.allGamesFinal) {
+    return `Waiting for all games to finish — fallback unlock ${lock.unlockLabel}.`;
   }
   if (lock.isTodaysSlate) {
-    return `Settle unlocks ${lock.unlockLabel} (after tonight's games wrap and stats post).`;
+    return "Games are final — settle unlocks once box scores are in.";
   }
   return `Settle unlocks ${lock.unlockLabel}.`;
 }

@@ -2,11 +2,10 @@ import { promises as fs } from "fs";
 import path from "path";
 import { getRedis } from "./kv";
 
-const KEY_PREFIX = "settle_all_final_at:";
 const LOCAL_PATH = path.join(process.cwd(), ".data", "settle_timing.json");
 
-function redisKey(slateDate: string): string {
-  return `${KEY_PREFIX}${slateDate}`;
+function deferredKey(slateDate: string): string {
+  return `deferred_until:${slateDate}`;
 }
 
 async function readLocalMap(): Promise<Record<string, string>> {
@@ -24,34 +23,49 @@ async function writeLocalMap(map: Record<string, string>): Promise<void> {
   await fs.writeFile(LOCAL_PATH, JSON.stringify(map, null, 2));
 }
 
-/** When all slate games first became Final (ISO). Does not touch parlay_state. */
-export async function getAllFinalAt(slateDate: string): Promise<Date | null> {
+export async function getSettleDeferredUntil(
+  slateDate: string
+): Promise<Date | null> {
+  const key = deferredKey(slateDate);
   const redis = getRedis();
   if (redis) {
-    const iso = await redis.get<string>(redisKey(slateDate));
+    const iso = await redis.get<string>(key);
     return iso ? new Date(iso) : null;
   }
 
   const map = await readLocalMap();
-  const iso = map[slateDate];
+  const iso = map[key];
   return iso ? new Date(iso) : null;
 }
 
-export async function markAllFinalAt(
+export async function setSettleDeferredUntil(
   slateDate: string,
-  at: Date
+  until: Date
 ): Promise<void> {
-  const existing = await getAllFinalAt(slateDate);
-  if (existing) return;
-
-  const iso = at.toISOString();
+  const key = deferredKey(slateDate);
+  const iso = until.toISOString();
   const redis = getRedis();
   if (redis) {
-    await redis.set(redisKey(slateDate), iso);
+    await redis.set(key, iso);
     return;
   }
 
   const map = await readLocalMap();
-  map[slateDate] = iso;
+  map[key] = iso;
+  await writeLocalMap(map);
+}
+
+export async function clearSettleDeferredUntil(
+  slateDate: string
+): Promise<void> {
+  const key = deferredKey(slateDate);
+  const redis = getRedis();
+  if (redis) {
+    await redis.del(key);
+    return;
+  }
+
+  const map = await readLocalMap();
+  delete map[key];
   await writeLocalMap(map);
 }
