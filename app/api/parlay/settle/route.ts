@@ -15,14 +15,17 @@ export async function POST() {
 
     const lock = await getSettleLockStatus(state.pending);
     if (lock.locked) {
-      const error = !lock.statsReady
-        ? "Tonight's box scores aren't in the stat feed yet — won't settle on yesterday's games."
-        : `Too early to settle. Unlocks ${lock.unlockLabel}.`;
+      const error =
+        lock.lockReason === "waiting_stats"
+          ? "Tonight's box scores aren't in the stat feed yet — won't settle on yesterday's games."
+          : lock.lockReason === "deferred"
+            ? `Settle deferred until ${lock.unlockLabel} after revert.`
+            : `Too early to settle. Unlocks ${lock.unlockLabel}.`;
       return Response.json(
         {
           error,
           state,
-          unlockAt: lock.unlockAt.toISOString(),
+          unlockAt: lock.unlockAt?.toISOString() ?? null,
         },
         { status: 400 }
       );

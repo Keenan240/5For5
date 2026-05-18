@@ -22,7 +22,8 @@ export async function POST() {
       settleLock: settleLock
         ? {
             locked: settleLock.locked,
-            unlockAt: settleLock.unlockAt.toISOString(),
+            lockReason: settleLock.lockReason,
+            unlockAt: settleLock.unlockAt?.toISOString() ?? null,
             unlockLabel: settleLock.unlockLabel,
             remainingMs: settleLock.remainingMs,
             statsReady: settleLock.statsReady,

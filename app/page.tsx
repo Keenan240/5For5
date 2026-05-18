@@ -36,9 +36,11 @@ import {
   toggleRankedSelection,
 } from "@/lib/parlay-selection";
 import { PARLAY_LEG_COUNT } from "@/lib/scoring";
+import { BootLoader } from "@/components/boot-loader";
 import { FiveForFive } from "@/components/five-for-five";
 import { formatDisplayDate, getTodayEastern } from "@/lib/dates";
-import { formatCountdown, settleLockHint } from "@/lib/settle-lock-ui";
+import type { SettleLockReason } from "@/lib/settle-lock-ui";
+import { settleButtonLabel, settleLockHint } from "@/lib/settle-lock-ui";
 
 type SlateInfo = {
   date: string;
@@ -50,7 +52,8 @@ type SlateInfo = {
 
 type SettleLockInfo = {
   locked: boolean;
-  unlockAt: string;
+  lockReason: SettleLockReason;
+  unlockAt: string | null;
   unlockLabel: string;
   remainingMs: number;
   statsReady: boolean;
@@ -97,19 +100,24 @@ export default function Home() {
   const [showScanReport, setShowScanReport] = useState(false);
   const [showDiscoveryLog, setShowDiscoveryLog] = useState(false);
   const [clockMs, setClockMs] = useState(() => Date.now());
+  const [booting, setBooting] = useState(true);
+  const [bootFading, setBootFading] = useState(false);
+  const [loadProgress, setLoadProgress] = useState(0);
   const progressEndRef = useRef<HTMLDivElement>(null);
 
   const settleLock = useMemo(() => {
     const raw = state?.settleLock;
     if (!raw) return null;
-    const unlockAt = new Date(raw.unlockAt);
-    const timeRemainingMs = Math.max(0, unlockAt.getTime() - clockMs);
-    const locked = timeRemainingMs > 0 || !raw.statsReady;
+    const timeRemainingMs =
+      raw.unlockAt != null
+        ? Math.max(0, new Date(raw.unlockAt).getTime() - clockMs)
+        : 0;
     return {
       ...raw,
-      unlockAt,
-      remainingMs: timeRemainingMs,
-      locked,
+      remainingMs:
+        raw.lockReason === "waiting_games" || raw.lockReason === "deferred"
+          ? timeRemainingMs
+          : raw.remainingMs,
     };
   }, [state?.settleLock, clockMs]);
 
@@ -170,23 +178,65 @@ export default function Home() {
     setPlaceError(null);
   }
 
-  const fetchStatus = useCallback(async () => {
-    const res = await fetch("/api/status");
-    const data = await res.json();
-    setState(data);
+  const fetchStatus = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false;
+    let tick: ReturnType<typeof setInterval> | undefined;
+    if (!silent) {
+      tick = setInterval(() => {
+        setLoadProgress((p) => (p >= 88 ? p : p + 4));
+      }, 60);
+    }
+    try {
+      const res = await fetch("/api/status");
+      const data = await res.json();
+      setState(data);
+      if (!silent) {
+        setLoadProgress(100);
+        setBootFading(true);
+        await new Promise((r) => setTimeout(r, 450));
+        setBooting(false);
+        setBootFading(false);
+      }
+    } finally {
+      if (tick) clearInterval(tick);
+    }
   }, []);
 
   useEffect(() => {
-    fetchStatus();
+    void fetchStatus();
   }, [fetchStatus]);
 
   useEffect(() => {
     if (!state?.pending || !settleLock?.locked) return;
+    const ms =
+      settleLock.lockReason === "waiting_stats" ? 5_000 : 15_000;
     const id = setInterval(() => {
-      void fetchStatus();
-    }, 30_000);
+      void fetchStatus({ silent: true });
+    }, ms);
     return () => clearInterval(id);
-  }, [state?.pending, settleLock?.locked, fetchStatus]);
+  }, [
+    state?.pending,
+    settleLock?.locked,
+    settleLock?.lockReason,
+    fetchStatus,
+  ]);
+
+  useEffect(() => {
+    if (!settleLock?.locked) return;
+    if (
+      settleLock.lockReason !== "waiting_games" &&
+      settleLock.lockReason !== "deferred"
+    ) {
+      return;
+    }
+    if (settleLock.remainingMs > 0) return;
+    void fetchStatus({ silent: true });
+  }, [
+    settleLock?.locked,
+    settleLock?.lockReason,
+    settleLock?.remainingMs,
+    fetchStatus,
+  ]);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -557,7 +607,15 @@ export default function Home() {
   const today = formatDisplayDate(getTodayEastern());
 
   return (
-    <main className="mx-auto max-w-md px-4 pb-10 pt-6">
+    <>
+      {(booting || bootFading) && (
+        <BootLoader progress={loadProgress} fadingOut={bootFading} />
+      )}
+    <main
+      className={`mx-auto max-w-md px-4 pb-10 pt-6 transition-opacity duration-500 ${
+        booting ? "opacity-0" : "opacity-100"
+      }`}
+    >
       <header className="mb-6 flex items-center justify-between text-sm text-[var(--text-muted)]">
         <h1 className="text-lg font-semibold tracking-tight text-[var(--text)]">
           5For5
@@ -845,28 +903,14 @@ export default function Home() {
         >
           {loading === "settle"
             ? "Settling…"
-            : settleLock?.locked
-              ? formatCountdown(settleLock.remainingMs)
+            : settleLock
+              ? settleButtonLabel(settleLock)
               : "Settle"}
         </button>
       </div>
       {state?.pending && settleLock?.locked && (
         <p className="mt-2 text-center text-xs text-[var(--text-muted)]">
-          {settleLock.deferredAfterRevert ? (
-            <>
-              Reverted — settle again{" "}
-              <span className="font-medium text-[var(--text)]">
-                {settleLock.unlockLabel}
-              </span>
-            </>
-          ) : (
-            <>
-              Settle unlocks{" "}
-              <span className="font-medium text-[var(--text)]">
-                {settleLock.unlockLabel}
-              </span>
-            </>
-          )}
+          {settleLockHint(settleLock)}
         </p>
       )}
 
@@ -950,6 +994,7 @@ export default function Home() {
         Reset simulation
       </button>
     </main>
+    </>
   );
 }
 

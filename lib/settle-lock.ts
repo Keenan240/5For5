@@ -10,6 +10,12 @@ const ET = "America/New_York";
 const UNLOCK_HOUR = 2;
 const UNLOCK_MINUTE = 30;
 
+export type SettleLockReason =
+  | "unlocked"
+  | "deferred"
+  | "waiting_stats"
+  | "waiting_games";
+
 export function addDaysYmd(ymd: string, days: number): string {
   const [y, m, d] = ymd.split("-").map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0));
@@ -80,7 +86,8 @@ export function formatUnlockTimeEt(unlockAt: Date): string {
 
 export type SettleLockStatus = {
   locked: boolean;
-  unlockAt: Date;
+  lockReason: SettleLockReason;
+  unlockAt: Date | null;
   unlockLabel: string;
   remainingMs: number;
   isTodaysSlate: boolean;
@@ -113,6 +120,7 @@ export async function getSettleLockStatus(
     const remainingMs = deferredUntil.getTime() - now;
     return {
       locked: true,
+      lockReason: "deferred",
       unlockAt: deferredUntil,
       unlockLabel: formatUnlockTimeEt(deferredUntil),
       remainingMs,
@@ -124,46 +132,55 @@ export async function getSettleLockStatus(
     };
   }
 
-  const slate = await getSlateForDate(pending.date);
-  const allGamesFinal =
-    slate.games.length > 0 &&
-    slate.games.every((g) => isGameFinal(g.status));
   const statsReady = await checkStatsReady(pending);
 
-  const canSettleNow = allGamesFinal && statsReady;
-  const canSettleFallback = now >= fallbackUnlock.getTime() && statsReady;
-  const locked = !canSettleNow && !canSettleFallback;
-
-  let unlockAt: Date;
-  let usingFallbackUnlock: boolean;
-
-  if (locked) {
-    if (!allGamesFinal) {
-      unlockAt = fallbackUnlock;
-      usingFallbackUnlock = true;
-    } else {
-      unlockAt = new Date(now);
-      usingFallbackUnlock = false;
-    }
-  } else if (canSettleNow) {
-    unlockAt = new Date(now);
-    usingFallbackUnlock = false;
-  } else {
-    unlockAt = fallbackUnlock;
-    usingFallbackUnlock = true;
+  if (statsReady) {
+    return {
+      locked: false,
+      lockReason: "unlocked",
+      unlockAt: null,
+      unlockLabel: "",
+      remainingMs: 0,
+      isTodaysSlate,
+      statsReady: true,
+      allGamesFinal: true,
+      usingFallbackUnlock: false,
+      deferredAfterRevert: false,
+    };
   }
 
-  const remainingMs = locked ? Math.max(0, unlockAt.getTime() - now) : 0;
+  const slate = await getSlateForDate(pending.date);
+  const allGamesFinal =
+    slate.games.length === 0 ||
+    slate.games.every((g) => isGameFinal(g.status));
+  const pastFallback = now >= fallbackUnlock.getTime();
 
+  if (allGamesFinal || pastFallback) {
+    return {
+      locked: true,
+      lockReason: "waiting_stats",
+      unlockAt: null,
+      unlockLabel: "when box scores post",
+      remainingMs: 0,
+      isTodaysSlate,
+      statsReady: false,
+      allGamesFinal,
+      usingFallbackUnlock: false,
+      deferredAfterRevert: false,
+    };
+  }
+
+  const remainingMs = Math.max(0, fallbackUnlock.getTime() - now);
   return {
-    locked,
-    unlockAt,
-    unlockLabel: formatUnlockTimeEt(unlockAt),
+    locked: true,
+    lockReason: "waiting_games",
+    unlockAt: fallbackUnlock,
+    unlockLabel: formatUnlockTimeEt(fallbackUnlock),
     remainingMs,
     isTodaysSlate,
-    statsReady,
-    allGamesFinal,
-    usingFallbackUnlock,
+    statsReady: false,
+    allGamesFinal: false,
+    usingFallbackUnlock: true,
     deferredAfterRevert: false,
   };
 }
@@ -177,7 +194,6 @@ export function getNextMorningSettleUnlock(slateDateYmd: string): Date {
   return getFallbackSettleUnlockAt(addDaysYmd(slateDateYmd, 4));
 }
 
-/** Call after a successful settle so a prior revert deferral does not block. */
 export async function clearSettleLockForDate(slateDate: string): Promise<void> {
   await clearSettleDeferredUntil(slateDate);
 }

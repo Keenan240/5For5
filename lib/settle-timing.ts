@@ -30,12 +30,25 @@ export async function getSettleDeferredUntil(
   const redis = getRedis();
   if (redis) {
     const iso = await redis.get<string>(key);
-    return iso ? new Date(iso) : null;
+    if (!iso) return null;
+    const date = new Date(iso);
+    if (date.getTime() <= Date.now()) {
+      await redis.del(key);
+      return null;
+    }
+    return date;
   }
 
   const map = await readLocalMap();
   const iso = map[key];
-  return iso ? new Date(iso) : null;
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (date.getTime() <= Date.now()) {
+    delete map[key];
+    await writeLocalMap(map);
+    return null;
+  }
+  return date;
 }
 
 export async function setSettleDeferredUntil(

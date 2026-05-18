@@ -1,11 +1,19 @@
+export type SettleLockReason =
+  | "unlocked"
+  | "deferred"
+  | "waiting_stats"
+  | "waiting_games";
+
 export type SettleLockView = {
   locked: boolean;
+  lockReason: SettleLockReason;
   unlockLabel: string;
   statsReady: boolean;
   allGamesFinal: boolean;
   usingFallbackUnlock: boolean;
   isTodaysSlate: boolean;
   deferredAfterRevert?: boolean;
+  remainingMs?: number;
 };
 
 export function formatCountdown(remainingMs: number): string {
@@ -18,20 +26,27 @@ export function formatCountdown(remainingMs: number): string {
 }
 
 export function settleLockHint(lock: SettleLockView): string {
-  if (lock.deferredAfterRevert) {
+  if (lock.deferredAfterRevert || lock.lockReason === "deferred") {
     return `Settle deferred until ${lock.unlockLabel} after revert — try again tomorrow morning.`;
   }
-  if (!lock.statsReady) {
-    return "Waiting for tonight's box scores in the stat feed — won't settle on yesterday's games.";
-  }
   if (!lock.locked) {
-    return "All games final with stats in — settle when FanDuel matches.";
+    return "Box scores are in — settle when FanDuel matches.";
   }
-  if (!lock.allGamesFinal) {
-    return `Waiting for all games to finish — fallback unlock ${lock.unlockLabel}.`;
+  if (lock.lockReason === "waiting_stats") {
+    return "Games are done — waiting for tonight's box scores in the stat feed (won't use yesterday's stats).";
   }
-  if (lock.isTodaysSlate) {
-    return "Games are final — settle unlocks once box scores are in.";
+  return `Waiting for all games to finish — fallback unlock ${lock.unlockLabel}.`;
+}
+
+export function settleButtonLabel(lock: SettleLockView): string {
+  if (!lock.locked) return "Settle";
+  if (lock.lockReason === "waiting_stats") return "Waiting for stats…";
+  if (
+    (lock.lockReason === "deferred" || lock.lockReason === "waiting_games") &&
+    lock.remainingMs != null &&
+    lock.remainingMs > 0
+  ) {
+    return formatCountdown(lock.remainingMs);
   }
-  return `Settle unlocks ${lock.unlockLabel}.`;
+  return "Settle locked";
 }

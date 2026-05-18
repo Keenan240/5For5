@@ -32,3 +32,23 @@ body {
 .font-mono {
   font-family: var(--font-mono);
 }
+
+.boot-loader-bar {
+  background: linear-gradient(
+    90deg,
+    var(--accent-dim) 0%,
+    var(--accent) 50%,
+    var(--accent-dim) 100%
+  );
+  background-size: 200% 100%;
+  animation: boot-loader-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes boot-loader-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
