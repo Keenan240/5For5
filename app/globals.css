@@ -95,3 +95,106 @@ body {
     background-position: -100% 0;
   }
 }
+
+/* Place / settle loading */
+.parlay-flow-status-enter {
+  animation: parlay-flow-panel-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes parlay-flow-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.parlay-flow-progress-track {
+  height: 3px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--border);
+}
+
+.parlay-flow-progress-fill {
+  height: 100%;
+  width: 42%;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    var(--accent-dim) 0%,
+    var(--accent) 45%,
+    #86efac 55%,
+    var(--accent) 100%
+  );
+  animation: parlay-flow-indeterminate 1.15s ease-in-out infinite;
+}
+
+@keyframes parlay-flow-indeterminate {
+  0% {
+    transform: translateX(-102%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.parlay-spinner {
+  animation: parlay-spinner-rotate 0.85s linear infinite;
+}
+
+@keyframes parlay-spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Pending parlay card — subtle “live” frame between place and settle */
+.parlay-pending-frame {
+  position: relative;
+  border-radius: 0.75rem;
+  padding: 1px;
+  background: linear-gradient(
+    125deg,
+    var(--border-strong) 0%,
+    rgba(74, 222, 128, 0.22) 35%,
+    rgba(251, 191, 36, 0.18) 65%,
+    var(--border-strong) 100%
+  );
+  background-size: 220% 220%;
+  animation: parlay-pending-sheen 5.5s ease-in-out infinite;
+}
+
+@keyframes parlay-pending-sheen {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.parlay-pending-inner {
+  border-radius: calc(0.75rem - 1px);
+  background: var(--bg-card);
+}
+
+.parlay-pending-inner-enter {
+  animation: parlay-pending-inner-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes parlay-pending-inner-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

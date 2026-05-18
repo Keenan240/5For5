@@ -38,6 +38,10 @@ import {
 } from "@/lib/parlay-selection";
 import { PARLAY_LEG_COUNT } from "@/lib/scoring";
 import { BootLoader } from "@/components/boot-loader";
+import {
+  ParlayButtonSpinner,
+  ParlayFlowStatus,
+} from "@/components/parlay-flow-status";
 import { DiscoveryInfoModal } from "@/components/discovery-info-modal";
 import { FiveForFive } from "@/components/five-for-five";
 import { formatDisplayDate, getTodayEastern } from "@/lib/dates";
@@ -580,6 +584,30 @@ export default function Home() {
     }
   }
 
+  async function handleCancelPending() {
+    if (
+      !confirm(
+        "Cancel this pending parlay? Your stake will be returned to your bankroll."
+      )
+    ) {
+      return;
+    }
+    setLoading("cancel");
+    setMessage(null);
+    try {
+      const res = await fetch("/api/parlay/cancel", { method: "POST" });
+      const data = await res.json();
+      if (data.message) setMessage(data.message);
+      if (data.error) setMessage(data.error ?? data.message);
+      await fetchStatus();
+    } catch {
+      setMessage("Cancel parlay failed. Try again.");
+      await fetchStatus();
+    } finally {
+      setLoading(null);
+    }
+  }
+
   async function handleSettle() {
     if (settleLock?.locked) {
       setMessage(
@@ -944,8 +972,9 @@ export default function Home() {
               selectedCount !== PARLAY_LEG_COUNT ||
               !draftMath?.valid
             }
-            className="mt-4 min-h-12 w-full rounded-xl bg-green-700 px-4 py-3 text-sm font-semibold text-[var(--text)] disabled:opacity-40"
+            className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-green-700 px-4 py-3 text-sm font-semibold text-[var(--text)] disabled:opacity-40"
           >
+            {loading === "place" && <ParlayButtonSpinner />}
             {loading === "place" ? "Placing…" : "Place Parlay"}
           </button>
           <button
@@ -964,49 +993,70 @@ export default function Home() {
         </section>
       )}
 
+      <ParlayFlowStatus phase={loading === "settle" ? "settle" : null} />
+
       {state?.pending && (
-        <section className="mb-4 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] p-4">
-          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-yellow-500">
-            Pending — {formatDisplayDate(state.pending.date)}
-          </p>
-          <p className="mb-3 text-xs leading-relaxed text-[var(--text-subtle)]">
-            {settleLock ? settleLockHint(settleLock) : ""}
-          </p>
-          {settleLock?.legsStats && settleLock.legsStats.length > 0 && (
-            <ul className="mb-3 space-y-1 text-[11px] text-[var(--text-muted)]">
-              {settleLock.legsStats.map((leg) => (
-                <li
-                  key={`${leg.player}-${leg.stat}`}
-                  className="flex justify-between gap-2"
-                >
-                  <span>
-                    {leg.player}{" "}
-                    <span className="text-[var(--text-subtle)]">
-                      {formatMilestoneLabel(leg.stat, leg.threshold)}
-                    </span>
-                  </span>
-                  <span
-                    className={
-                      leg.ready
-                        ? leg.hit
-                          ? "text-green-400"
-                          : "text-red-400"
-                        : "text-amber-400/90"
-                    }
+        <div
+          key={`${state.pending.date}-${state.pending.stake}-${state.pending.parlayOdds}`}
+          className="parlay-pending-frame mb-4"
+        >
+          <section
+            className={`parlay-pending-inner parlay-pending-inner-enter p-4 transition-opacity duration-300 ${
+              loading === "settle" ? "pointer-events-none opacity-55" : ""
+            }`}
+          >
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-yellow-500">
+              Pending — {formatDisplayDate(state.pending.date)}
+            </p>
+            <p className="mb-3 text-xs leading-relaxed text-[var(--text-subtle)]">
+              {settleLock ? settleLockHint(settleLock) : ""}
+            </p>
+            {settleLock?.legsStats && settleLock.legsStats.length > 0 && (
+              <ul className="mb-3 space-y-1 text-[11px] text-[var(--text-muted)]">
+                {settleLock.legsStats.map((leg) => (
+                  <li
+                    key={`${leg.player}-${leg.stat}`}
+                    className="flex justify-between gap-2"
                   >
-                    {leg.ready && leg.actualValue != null
-                      ? `got ${leg.actualValue} · ${leg.source ?? "?"}`
-                      : leg.error === "player_not_found"
-                        ? "not found in feed"
-                        : "no box score yet"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          <PendingCard parlay={state.pending} />
-        </section>
+                    <span>
+                      {leg.player}{" "}
+                      <span className="text-[var(--text-subtle)]">
+                        {formatMilestoneLabel(leg.stat, leg.threshold)}
+                      </span>
+                    </span>
+                    <span
+                      className={
+                        leg.ready
+                          ? leg.hit
+                            ? "text-green-400"
+                            : "text-red-400"
+                          : "text-amber-400/90"
+                      }
+                    >
+                      {leg.ready && leg.actualValue != null
+                        ? `got ${leg.actualValue} · ${leg.source ?? "?"}`
+                        : leg.error === "player_not_found"
+                          ? "not found in feed"
+                          : "no box score yet"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <PendingCard parlay={state.pending} />
+            <button
+              type="button"
+              onClick={handleCancelPending}
+              disabled={!!loading}
+              className="mt-3 w-full rounded-lg border border-red-900/60 bg-red-950/40 py-2.5 text-sm font-medium text-red-200 transition-colors hover:bg-red-950/70 disabled:opacity-40"
+            >
+              {loading === "cancel" ? "Cancelling…" : "Cancel pending parlay"}
+            </button>
+          </section>
+        </div>
       )}
+
+      <ParlayFlowStatus phase={loading === "place" ? "place" : null} />
 
       <div className="relative">
         {createOptsOpen && (
@@ -1081,8 +1131,9 @@ export default function Home() {
             disabled={
               !!loading || !state?.pending || settleLock?.locked === true
             }
-            className="min-h-12 rounded-xl bg-[var(--bg-elevated)] px-3 py-3 text-sm font-semibold text-[var(--text)] ring-1 ring-[var(--border-strong)] disabled:opacity-40"
+            className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[var(--bg-elevated)] px-3 py-3 text-sm font-semibold text-[var(--text)] ring-1 ring-[var(--border-strong)] disabled:opacity-40"
           >
+            {loading === "settle" && <ParlayButtonSpinner />}
             {loading === "settle"
               ? "Settling…"
               : settleLock
