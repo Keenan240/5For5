@@ -16,7 +16,9 @@ export async function settleRankedPick(
   idMap: Awaited<ReturnType<typeof loadPlayerIdMap>>
 ): Promise<SettledRankedPick> {
   const key = STAT_KEY[pick.stat];
-  const latest = await getGameStatForDate(pick.player, key, slateDate, idMap);
+  const latest = await getGameStatForDate(pick.player, key, slateDate, idMap, undefined, {
+    allowPriorDay: false,
+  });
   const actualValue = latest?.value ?? 0;
   const hit = actualValue >= pick.threshold;
   return { ...pick, actualValue, hit };
@@ -38,7 +40,9 @@ export async function settlePending(state: ParlayState): Promise<{
         leg.player,
         key,
         pending.date,
-        idMap
+        idMap,
+        undefined,
+        { allowPriorDay: false }
       );
       const actualValue = latest?.value ?? 0;
       const hit = actualValue >= leg.threshold;

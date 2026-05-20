@@ -1,5 +1,5 @@
 import { getState, setState } from "@/lib/kv";
-import { clearSettleLockForDate, getSettleLockStatus } from "@/lib/settle-lock";
+import { clearSettleLockForDate } from "@/lib/settle-lock";
 import { settlePending } from "@/lib/settle";
 
 export async function POST() {
@@ -11,24 +11,6 @@ export async function POST() {
         message: "No pending parlay to settle.",
         state,
       });
-    }
-
-    const lock = await getSettleLockStatus(state.pending);
-    if (lock.locked) {
-      const error =
-        lock.lockReason === "waiting_stats"
-          ? "Tonight's box scores aren't in the stat feed yet — won't settle on yesterday's games."
-          : lock.lockReason === "deferred"
-            ? `Settle deferred until ${lock.unlockLabel} after revert.`
-            : `Too early to settle. Unlocks ${lock.unlockLabel}.`;
-      return Response.json(
-        {
-          error,
-          state,
-          unlockAt: lock.unlockAt?.toISOString() ?? null,
-        },
-        { status: 400 }
-      );
     }
 
     const { state: newState, summary } = await settlePending(state);

@@ -1,8 +1,10 @@
 import { fetchJson } from "./fetch";
 import {
+  addDaysYmd,
   normalizeGameLogDate,
   pickBestSlateGame,
   slateDateCandidates,
+  type PickBestSlateGameOptions,
 } from "./dates";
 import {
   findEspnGameOnSlate,
@@ -12,7 +14,7 @@ import {
 } from "./espn";
 import { looksLikeMatchup } from "./h2h";
 import { STAT_KEY } from "./milestones";
-import { cachedFetch } from "./stats-cache";
+import { cachedFetch, SETTLE_POLL_CACHE_MS } from "./stats-cache";
 import type { GameLog, StatCategory } from "./types";
 
 const NBA_HEADERS = {
@@ -157,10 +159,20 @@ async function fetchAllGameLogs(playerId: string): Promise<GameLog[]> {
 async function findNbaGameOnSlate(
   playerId: string,
   slateYmd: string,
-  exactDateOnly = false
+  pickOpts: PickBestSlateGameOptions = {}
 ): Promise<{ game: GameLog; matchedYmd: string } | null> {
   const logs = await fetchAllGameLogs(playerId);
-  return pickBestSlateGame(logs, slateYmd, { exactDateOnly });
+  return pickBestSlateGame(logs, slateYmd, pickOpts);
+}
+
+function gameStatPickOpts(
+  options: GameStatForDateOptions
+): PickBestSlateGameOptions {
+  if (options.exactDateOnly) return { exactDateOnly: true };
+  return {
+    exactDateOnly: false,
+    allowPriorDay: options.allowPriorDay ?? false,
+  };
 }
 
 export type PlayerLogCache = Map<string, GameLog[]>;
@@ -322,18 +334,35 @@ export const getLatestPlayoffStat = getLatestGameStat;
 export type GameStatForDateOptions = {
   /** Only accept a box score on the parlay calendar date (pending UI). */
   exactDateOnly?: boolean;
+  /** Adjacent settle match: include prior day (default false). */
+  allowPriorDay?: boolean;
 };
+
+export type ResolveLegOnSlateOptions = {
+  /** false = exact slate date only (pending UI). true = tonight or next day, not yesterday. */
+  allowAdjacentDay?: boolean;
+  allowPriorDay?: boolean;
+};
+
+function pickOptsFromResolve(options: ResolveLegOnSlateOptions): PickBestSlateGameOptions {
+  if (!options.allowAdjacentDay) return { exactDateOnly: true };
+  return { exactDateOnly: false, allowPriorDay: options.allowPriorDay ?? false };
+}
 
 /** NBA + ESPN in parallel for the leg's milestone stat on the slate date. */
 export async function resolveLegOnSlate(
   leg: LegForSlateCheck,
   slateYmd: string,
   idMap?: Map<string, string>,
-  explicitNbaId?: string
+  explicitNbaId?: string,
+  options: ResolveLegOnSlateOptions = {}
 ): Promise<SlateGameResolution> {
+  const pickOpts = pickOptsFromResolve(options);
+  const cacheKey = `leg:${pickOpts.exactDateOnly ? "exact" : "adj"}:${pickOpts.allowPriorDay ? "p" : "n"}:${normalizeName(leg.player)}:${slateYmd}:${leg.stat}`;
   const statKey = STAT_KEY[leg.stat];
-  const cacheKey = `leg:exact:${normalizeName(leg.player)}:${slateYmd}:${leg.stat}`;
-  return cachedFetch(cacheKey, async () => {
+  return cachedFetch(
+    cacheKey,
+    async () => {
     const base = {
       player: leg.player,
       stat: leg.stat,
@@ -347,7 +376,12 @@ export async function resolveLegOnSlate(
       slateYmd,
       idMap,
       explicitNbaId,
-      { exactDateOnly: true }
+      pickOpts.exactDateOnly
+        ? { exactDateOnly: true }
+        : {
+            exactDateOnly: false,
+            allowPriorDay: pickOpts.allowPriorDay ?? false,
+          }
     );
 
     if (!statHit) {
@@ -371,7 +405,20 @@ export async function resolveLegOnSlate(
       actualValue,
       hit: actualValue >= leg.threshold,
     };
-  });
+  },
+    SETTLE_POLL_CACHE_MS
+  );
+}
+
+function slateMatchRank(
+  matchedYmd: string,
+  slateYmd: string,
+  allowPriorDay: boolean
+): number {
+  if (matchedYmd === slateYmd) return 0;
+  if (matchedYmd === addDaysYmd(slateYmd, 1)) return 1;
+  if (allowPriorDay && matchedYmd === addDaysYmd(slateYmd, -1)) return 2;
+  return 99;
 }
 
 function pickStatHit(
@@ -388,20 +435,28 @@ function pickStatHit(
     source: "espn";
   } | null,
   slateYmd: string,
-  exactDateOnly: boolean
+  pickOpts: PickBestSlateGameOptions
 ) {
-  if (exactDateOnly) {
+  const allowPriorDay = pickOpts.allowPriorDay ?? false;
+  if (pickOpts.exactDateOnly) {
     if (nbaHit?.matchedYmd === slateYmd) return nbaHit;
     if (espnStat?.matchedYmd === slateYmd) return espnStat;
     return null;
   }
 
-  if (nbaHit && espnStat) {
-    if (nbaHit.matchedYmd === slateYmd) return nbaHit;
-    if (espnStat.matchedYmd === slateYmd) return espnStat;
-    return nbaHit;
-  }
-  return nbaHit ?? espnStat;
+  const candidates = [nbaHit, espnStat].filter(
+    (h): h is NonNullable<typeof h> => h != null
+  );
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => {
+    const rank =
+      slateMatchRank(a.matchedYmd, slateYmd, allowPriorDay) -
+      slateMatchRank(b.matchedYmd, slateYmd, allowPriorDay);
+    if (rank !== 0) return rank;
+    return a.source === "nba" ? -1 : 1;
+  });
+  return candidates[0];
 }
 
 export async function getGameStatForDate(
@@ -417,15 +472,19 @@ export async function getGameStatForDate(
   matchedYmd: string;
   source: "nba" | "espn";
 } | null> {
-  const exact = options.exactDateOnly ? ":exact" : "";
-  const cacheKey = `stat:${normalizeName(playerName)}:${slateYmd}:${statKey}${exact}`;
+  const pickOpts = gameStatPickOpts(options);
+  const cacheSuffix = pickOpts.exactDateOnly
+    ? ":exact"
+    : pickOpts.allowPriorDay
+      ? ":adj-p"
+      : ":adj";
+  const cacheKey = `stat:${normalizeName(playerName)}:${slateYmd}:${String(statKey)}${cacheSuffix}`;
   return cachedFetch(cacheKey, async () => {
     const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
-    const exactDateOnly = options.exactDateOnly ?? false;
 
     const [nbaHit, espnStat] = await Promise.all([
       playerId
-        ? findNbaGameOnSlate(playerId, slateYmd, exactDateOnly).then((hit) => {
+        ? findNbaGameOnSlate(playerId, slateYmd, pickOpts).then((hit) => {
             if (!hit) return null;
             const value = hit.game[statKey as keyof GameLog];
             if (typeof value !== "number") return null;
@@ -437,7 +496,7 @@ export async function getGameStatForDate(
             };
           })
         : Promise.resolve(null),
-      findEspnGameOnSlate(playerName, slateYmd, exactDateOnly).then((hit) => {
+      findEspnGameOnSlate(playerName, slateYmd, pickOpts).then((hit) => {
         if (!hit) return null;
         const value = hit.game[statKey];
         if (typeof value !== "number") return null;
@@ -450,7 +509,7 @@ export async function getGameStatForDate(
       }),
     ]);
 
-    const pick = pickStatHit(nbaHit, espnStat, slateYmd, exactDateOnly);
+    const pick = pickStatHit(nbaHit, espnStat, slateYmd, pickOpts);
     if (!pick) return null;
     return {
       value: pick.value,
@@ -464,11 +523,14 @@ export async function getGameStatForDate(
 export async function checkAllLegsStatsReady(
   legs: LegForSlateCheck[],
   slateYmd: string,
-  idMap?: Map<string, string>
+  idMap?: Map<string, string>,
+  options: ResolveLegOnSlateOptions = {}
 ): Promise<{ ready: boolean; legs: SlateGameResolution[] }> {
   const map = idMap ?? (await loadPlayerIdMap());
   const legResults = await Promise.all(
-    legs.map((leg) => resolveLegOnSlate(leg, slateYmd, map))
+    legs.map((leg) =>
+      resolveLegOnSlate(leg, slateYmd, map, undefined, options)
+    )
   );
   return {
     ready: legResults.every((r) => r.ready),

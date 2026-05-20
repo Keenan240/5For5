@@ -239,36 +239,12 @@ export default function Home() {
   }, [fetchStatus]);
 
   useEffect(() => {
-    if (!state?.pending || !settleLock?.locked) return;
-    const ms =
-      settleLock.lockReason === "waiting_stats" ? 5_000 : 15_000;
+    if (!state?.pending) return;
     const id = setInterval(() => {
       void fetchStatus({ silent: true });
-    }, ms);
+    }, 8_000);
     return () => clearInterval(id);
-  }, [
-    state?.pending,
-    settleLock?.locked,
-    settleLock?.lockReason,
-    fetchStatus,
-  ]);
-
-  useEffect(() => {
-    if (!settleLock?.locked) return;
-    if (
-      settleLock.lockReason !== "waiting_games" &&
-      settleLock.lockReason !== "deferred"
-    ) {
-      return;
-    }
-    if (settleLock.remainingMs > 0) return;
-    void fetchStatus({ silent: true });
-  }, [
-    settleLock?.locked,
-    settleLock?.lockReason,
-    settleLock?.remainingMs,
-    fetchStatus,
-  ]);
+  }, [state?.pending, fetchStatus]);
 
   const historyNewestFirst = useMemo(
     () => (state?.history ? [...state.history].reverse() : []),
@@ -609,15 +585,6 @@ export default function Home() {
   }
 
   async function handleSettle() {
-    if (settleLock?.locked) {
-      setMessage(
-        !settleLock.statsReady
-          ? "Tonight's box scores aren't in the stat feed yet."
-          : `Too early to settle. Unlocks ${settleLock.unlockLabel}.`
-      );
-      return;
-    }
-
     setLoading("settle");
     setMessage(null);
     try {
@@ -1128,9 +1095,7 @@ export default function Home() {
           <button
             type="button"
             onClick={handleSettle}
-            disabled={
-              !!loading || !state?.pending || settleLock?.locked === true
-            }
+            disabled={!!loading || !state?.pending}
             className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[var(--bg-elevated)] px-3 py-3 text-sm font-semibold text-[var(--text)] ring-1 ring-[var(--border-strong)] disabled:opacity-40"
           >
             {loading === "settle" && <ParlayButtonSpinner />}
@@ -1167,12 +1132,6 @@ export default function Home() {
           </button>
         </div>
       </div>
-      {state?.pending && settleLock?.locked && (
-        <p className="mt-2 text-center text-xs text-[var(--text-muted)]">
-          {settleLockHint(settleLock)}
-        </p>
-      )}
-
       {progressLines.length > 0 && (
         <CollapsiblePanel
           title="Discovery log"

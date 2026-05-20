@@ -67,10 +67,14 @@ function uniqueAbbrevs(games: { home: string; away: string }[]): string[] {
   return [...set];
 }
 
-export async function getSlateForDate(date: string): Promise<TonightSlate> {
+export async function getSlateForDate(
+  date: string,
+  opts?: { fresh?: boolean }
+): Promise<TonightSlate> {
   const cacheKey = `${date}-v4`;
 
   if (
+    !opts?.fresh &&
     slateCache &&
     slateCache.key === cacheKey &&
     Date.now() - slateCache.at < CACHE_MS

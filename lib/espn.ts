@@ -1,5 +1,9 @@
 import { fetchJson } from "./fetch";
-import { normalizeGameLogDate, pickBestSlateGame } from "./dates";
+import {
+  normalizeGameLogDate,
+  pickBestSlateGame,
+  type PickBestSlateGameOptions,
+} from "./dates";
 import { canonicalTeamAbbrev } from "./h2h";
 import type { GameLog, SeasonType } from "./types";
 
@@ -244,10 +248,10 @@ export async function getLatestGameStatFromEspn(
 export async function findEspnGameOnSlate(
   playerName: string,
   slateYmd: string,
-  exactDateOnly = false
+  pickOpts: PickBestSlateGameOptions = {}
 ): Promise<{ game: GameLog; matchedYmd: string } | null> {
   const logs = await getEspnGameLogs(playerName, 35);
-  return pickBestSlateGame(logs, slateYmd, { exactDateOnly });
+  return pickBestSlateGame(logs, slateYmd, pickOpts);
 }
 
 export async function getGameStatFromEspnForDate(
@@ -256,7 +260,9 @@ export async function getGameStatFromEspnForDate(
   slateYmd: string,
   exactDateOnly = false
 ): Promise<{ value: number; min: number; matchedYmd: string } | null> {
-  const hit = await findEspnGameOnSlate(playerName, slateYmd, exactDateOnly);
+  const hit = await findEspnGameOnSlate(playerName, slateYmd, {
+    exactDateOnly,
+  });
   if (!hit) return null;
   const value = hit.game[statKey];
   if (typeof value !== "number") return null;

@@ -74,6 +74,8 @@ export function gameLogMatchesSlateDate(
 export type PickBestSlateGameOptions = {
   /** Only match the parlay calendar date (not ±1 day). Use for live pending UI. */
   exactDateOnly?: boolean;
+  /** When adjacent matching, include prior day (default false — avoids yesterday's box score). */
+  allowPriorDay?: boolean;
 };
 
 export function pickBestSlateGame<T extends { date: string }>(
@@ -82,17 +84,21 @@ export function pickBestSlateGame<T extends { date: string }>(
   options: PickBestSlateGameOptions = {}
 ): { game: T; matchedYmd: string } | null {
   let best: { game: T; matchedYmd: string; rank: number } | null = null;
+  const adjacentAllowed = options.allowPriorDay
+    ? slateDateCandidates(slateYmd)
+    : [slateYmd, addDaysYmd(slateYmd, 1)];
 
   for (const game of logs) {
     const ymd = logDateToYmd(game.date);
     if (!ymd) continue;
     if (options.exactDateOnly) {
       if (ymd !== slateYmd) continue;
-    } else if (!slateDateCandidates(slateYmd).includes(ymd)) {
+    } else if (!adjacentAllowed.includes(ymd)) {
       continue;
     }
 
-    const rank = ymd === slateYmd ? 0 : 1;
+    const rank =
+      ymd === slateYmd ? 0 : ymd === addDaysYmd(slateYmd, 1) ? 1 : 2;
     if (!best || rank < best.rank) {
       best = { game, matchedYmd: ymd, rank };
     }
