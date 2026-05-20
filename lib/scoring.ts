@@ -316,7 +316,7 @@ async function evaluatePlayerStandard(
 
       odds,
 
-      score: scoreLeg(buffer, odds),
+      score: scoreLeg(buffer, odds, threshold),
 
     });
 
@@ -448,7 +448,7 @@ async function evaluatePlayerH2h(
 
       odds,
 
-      score: scoreLeg(buffer, odds),
+      score: scoreLeg(buffer, odds, threshold),
 
       h2hOpponent: opponent,
 
@@ -594,13 +594,14 @@ async function discoverFromRoster(
 
 
 
-function scoreLeg(buffer: number, odds: number): number {
+function scoreLeg(buffer: number, odds: number, threshold: number): number {
 
   const oddsSweet =
 
     odds <= -119 && odds >= -399 ? 1.2 : odds > -399 ? 0.9 : 0.7;
 
-  const bufferScore = Math.min(buffer / 5, 1.5);
+  const relativeBuffer = threshold > 0 ? buffer / threshold : 0;
+  const bufferScore = Math.min(relativeBuffer, 1.5);
 
   return bufferScore * oddsSweet;
 

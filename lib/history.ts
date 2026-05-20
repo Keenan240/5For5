@@ -14,6 +14,13 @@ export function bankrollFromHistory(state: ParlayState): number {
   return bankroll;
 }
 
+/** Fix live bankroll when it drifted from place/settle accounting. */
+export function reconcileBankroll(state: ParlayState): ParlayState {
+  const computed = bankrollFromHistory(state);
+  if (computed === state.bankroll) return state;
+  return { ...state, bankroll: computed };
+}
+
 export async function deleteHistoryEntry(
   index: number
 ): Promise<{ ok: boolean; state: ParlayState; error?: string }> {

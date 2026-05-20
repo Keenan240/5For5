@@ -43,6 +43,12 @@ type EspnRosterResponse = {
   }[];
 };
 
+function isEspnPlayerOut(status?: { type?: string; name?: string }): boolean {
+  const type = status?.type?.toLowerCase() ?? "";
+  const name = status?.name?.trim().toUpperCase() ?? "";
+  return type === "out" || name === "OUT";
+}
+
 /** Live roster from ESPN (updates with trades; does not time out like stats.nba.com) */
 export async function fetchRostersFromEspn(
   abbrevs: string[]
@@ -62,7 +68,7 @@ export async function fetchRostersFromEspn(
         const name = (a.displayName || a.fullName || "").trim();
         if (!name) continue;
         const statusType = a.status?.type?.toLowerCase() ?? "";
-        if (statusType === "inactive") continue;
+        if (statusType === "inactive" || isEspnPlayerOut(a.status)) continue;
         players.push({ player: name, team: abbrev.toUpperCase() });
       }
     })

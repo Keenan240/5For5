@@ -64,7 +64,10 @@ export async function settlePending(state: ParlayState): Promise<{
     failureAnalysis = reasons.join(". ");
   }
 
-  const newBankroll = roundMoney(state.bankroll + profit);
+  // Stake already deducted at place; wins add net profit, losses change nothing.
+  const newBankroll = roundMoney(
+    allHit ? state.bankroll + profit : state.bankroll
+  );
 
   let rankedResults: SettledRankedPick[] | undefined;
   if (pending.rankedPool?.length) {

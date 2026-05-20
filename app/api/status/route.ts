@@ -1,9 +1,15 @@
-import { getState, storageMode } from "@/lib/kv";
+import { reconcileBankroll } from "@/lib/history";
+import { getState, setState, storageMode } from "@/lib/kv";
 import { getSettleLockStatus } from "@/lib/settle-lock";
 import { getTonightSlate } from "@/lib/tonight";
 
 export async function GET() {
-  const state = await getState();
+  let state = await getState();
+  const reconciled = reconcileBankroll(state);
+  if (reconciled.bankroll !== state.bankroll) {
+    await setState(reconciled);
+    state = reconciled;
+  }
   const slate = await getTonightSlate();
 
   const settleLock = state.pending

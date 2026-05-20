@@ -243,18 +243,20 @@ export async function getLatestGameStatFromEspn(
 
 export async function findEspnGameOnSlate(
   playerName: string,
-  slateYmd: string
+  slateYmd: string,
+  exactDateOnly = false
 ): Promise<{ game: GameLog; matchedYmd: string } | null> {
   const logs = await getEspnGameLogs(playerName, 35);
-  return pickBestSlateGame(logs, slateYmd);
+  return pickBestSlateGame(logs, slateYmd, { exactDateOnly });
 }
 
 export async function getGameStatFromEspnForDate(
   playerName: string,
   statKey: keyof GameLog,
-  slateYmd: string
+  slateYmd: string,
+  exactDateOnly = false
 ): Promise<{ value: number; min: number; matchedYmd: string } | null> {
-  const hit = await findEspnGameOnSlate(playerName, slateYmd);
+  const hit = await findEspnGameOnSlate(playerName, slateYmd, exactDateOnly);
   if (!hit) return null;
   const value = hit.game[statKey];
   if (typeof value !== "number") return null;

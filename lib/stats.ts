@@ -5,8 +5,8 @@ import {
   slateDateCandidates,
 } from "./dates";
 import {
+  findEspnGameOnSlate,
   getEspnGameLogs,
-  getGameStatFromEspnForDate,
   getLast5GamesFromEspn,
   getLatestGameStatFromEspn,
 } from "./espn";
@@ -156,10 +156,11 @@ async function fetchAllGameLogs(playerId: string): Promise<GameLog[]> {
 
 async function findNbaGameOnSlate(
   playerId: string,
-  slateYmd: string
+  slateYmd: string,
+  exactDateOnly = false
 ): Promise<{ game: GameLog; matchedYmd: string } | null> {
   const logs = await fetchAllGameLogs(playerId);
-  return pickBestSlateGame(logs, slateYmd);
+  return pickBestSlateGame(logs, slateYmd, { exactDateOnly });
 }
 
 export type PlayerLogCache = Map<string, GameLog[]>;
@@ -318,6 +319,11 @@ export async function getLatestGameStat(
 
 export const getLatestPlayoffStat = getLatestGameStat;
 
+export type GameStatForDateOptions = {
+  /** Only accept a box score on the parlay calendar date (pending UI). */
+  exactDateOnly?: boolean;
+};
+
 /** NBA + ESPN in parallel for the leg's milestone stat on the slate date. */
 export async function resolveLegOnSlate(
   leg: LegForSlateCheck,
@@ -326,7 +332,7 @@ export async function resolveLegOnSlate(
   explicitNbaId?: string
 ): Promise<SlateGameResolution> {
   const statKey = STAT_KEY[leg.stat];
-  const cacheKey = `leg:${normalizeName(leg.player)}:${slateYmd}:${leg.stat}`;
+  const cacheKey = `leg:exact:${normalizeName(leg.player)}:${slateYmd}:${leg.stat}`;
   return cachedFetch(cacheKey, async () => {
     const base = {
       player: leg.player,
@@ -340,7 +346,8 @@ export async function resolveLegOnSlate(
       statKey,
       slateYmd,
       idMap,
-      explicitNbaId
+      explicitNbaId,
+      { exactDateOnly: true }
     );
 
     if (!statHit) {
@@ -367,25 +374,58 @@ export async function resolveLegOnSlate(
   });
 }
 
+function pickStatHit(
+  nbaHit: {
+    value: number;
+    min: number;
+    matchedYmd: string;
+    source: "nba";
+  } | null,
+  espnStat: {
+    value: number;
+    min: number;
+    matchedYmd: string;
+    source: "espn";
+  } | null,
+  slateYmd: string,
+  exactDateOnly: boolean
+) {
+  if (exactDateOnly) {
+    if (nbaHit?.matchedYmd === slateYmd) return nbaHit;
+    if (espnStat?.matchedYmd === slateYmd) return espnStat;
+    return null;
+  }
+
+  if (nbaHit && espnStat) {
+    if (nbaHit.matchedYmd === slateYmd) return nbaHit;
+    if (espnStat.matchedYmd === slateYmd) return espnStat;
+    return nbaHit;
+  }
+  return nbaHit ?? espnStat;
+}
+
 export async function getGameStatForDate(
   playerName: string,
   statKey: keyof GameLog,
   slateYmd: string,
   idMap?: Map<string, string>,
-  explicitNbaId?: string
+  explicitNbaId?: string,
+  options: GameStatForDateOptions = {}
 ): Promise<{
   value: number;
   min: number;
   matchedYmd: string;
   source: "nba" | "espn";
 } | null> {
-  const cacheKey = `stat:${normalizeName(playerName)}:${slateYmd}:${statKey}`;
+  const exact = options.exactDateOnly ? ":exact" : "";
+  const cacheKey = `stat:${normalizeName(playerName)}:${slateYmd}:${statKey}${exact}`;
   return cachedFetch(cacheKey, async () => {
     const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
+    const exactDateOnly = options.exactDateOnly ?? false;
 
     const [nbaHit, espnStat] = await Promise.all([
       playerId
-        ? findNbaGameOnSlate(playerId, slateYmd).then((hit) => {
+        ? findNbaGameOnSlate(playerId, slateYmd, exactDateOnly).then((hit) => {
             if (!hit) return null;
             const value = hit.game[statKey as keyof GameLog];
             if (typeof value !== "number") return null;
@@ -397,20 +437,20 @@ export async function getGameStatForDate(
             };
           })
         : Promise.resolve(null),
-      getGameStatFromEspnForDate(playerName, statKey, slateYmd).then((s) =>
-        s ? { ...s, source: "espn" as const } : null
-      ),
+      findEspnGameOnSlate(playerName, slateYmd, exactDateOnly).then((hit) => {
+        if (!hit) return null;
+        const value = hit.game[statKey];
+        if (typeof value !== "number") return null;
+        return {
+          value,
+          min: hit.game.min,
+          matchedYmd: hit.matchedYmd,
+          source: "espn" as const,
+        };
+      }),
     ]);
 
-    const pick =
-      nbaHit && espnStat
-        ? nbaHit.matchedYmd === slateYmd
-          ? nbaHit
-          : espnStat.matchedYmd === slateYmd
-            ? espnStat
-            : nbaHit
-        : nbaHit ?? espnStat;
-
+    const pick = pickStatHit(nbaHit, espnStat, slateYmd, exactDateOnly);
     if (!pick) return null;
     return {
       value: pick.value,

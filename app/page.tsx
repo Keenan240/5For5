@@ -1037,7 +1037,7 @@ export default function Home() {
                         ? `got ${leg.actualValue} · ${leg.source ?? "?"}`
                         : leg.error === "player_not_found"
                           ? "not found in feed"
-                          : "no box score yet"}
+                          : "waiting for tonight's box score"}
                     </span>
                   </li>
                 ))}
@@ -1437,7 +1437,6 @@ function HistoryCard({
   async function handleOtherLegsClick(e: MouseEvent<HTMLButtonElement>) {
     e.stopPropagation();
     if (backfilling) return;
-    const needsRefresh = !hasRankedResults || !hasPlaceTimePool;
     if (hasRankedResults && hasPlaceTimePool) {
       setShowRankedResults((v) => !v);
       return;

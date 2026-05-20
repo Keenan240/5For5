@@ -35,8 +35,13 @@ export function qualifiesForMilestone(values: number[], threshold: number): bool
 /** Walk ladder upward; stop at first failure; return highest passing threshold */
 export function discoverMilestone(values: number[], ladder: number[]): number | null {
   if (values.length < 5) return null;
+  const l5Average = values.reduce((a, b) => a + b, 0) / values.length;
+  const dynamicFloor = l5Average * 0.5;
+  const eligibleLadder = ladder.filter((t) => t >= dynamicFloor);
+  if (eligibleLadder.length === 0) return null;
+
   let best: number | null = null;
-  for (const t of ladder) {
+  for (const t of eligibleLadder) {
     if (qualifiesForMilestone(values, t)) best = t;
     else break;
   }

@@ -71,15 +71,26 @@ export function gameLogMatchesSlateDate(
   return slateDateCandidates(slateYmd).includes(ymd);
 }
 
+export type PickBestSlateGameOptions = {
+  /** Only match the parlay calendar date (not ±1 day). Use for live pending UI. */
+  exactDateOnly?: boolean;
+};
+
 export function pickBestSlateGame<T extends { date: string }>(
   logs: T[],
-  slateYmd: string
+  slateYmd: string,
+  options: PickBestSlateGameOptions = {}
 ): { game: T; matchedYmd: string } | null {
   let best: { game: T; matchedYmd: string; rank: number } | null = null;
 
   for (const game of logs) {
     const ymd = logDateToYmd(game.date);
-    if (!ymd || !slateDateCandidates(slateYmd).includes(ymd)) continue;
+    if (!ymd) continue;
+    if (options.exactDateOnly) {
+      if (ymd !== slateYmd) continue;
+    } else if (!slateDateCandidates(slateYmd).includes(ymd)) {
+      continue;
+    }
 
     const rank = ymd === slateYmd ? 0 : 1;
     if (!best || rank < best.rank) {
