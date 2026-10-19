@@ -13,6 +13,12 @@ const ESPN_SEARCH =
 const ESPN_GAMELOG =
   "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes";
 
+const ESPN_HEADERS: HeadersInit = {
+  "User-Agent":
+    "Mozilla/5.0 (compatible; 5For5/1.0; +https://github.com/Keenan240/5For5)",
+  Accept: "application/json",
+};
+
 /** ESPN uses end-year; try both conventions for reliability. */
 export function espnSeasonCandidates(): number[] {
   const y = nbaSeasonYear();
@@ -36,7 +42,7 @@ export async function getEspnAthleteId(playerName: string): Promise<string | nul
   const url = `${ESPN_SEARCH}?query=${encodeURIComponent(playerName)}&limit=8&type=player`;
   const result = await fetchJson<{
     items?: { id: string; displayName?: string; type?: string }[];
-  }>(url, undefined, 12_000);
+  }>(url, { headers: ESPN_HEADERS }, 12_000);
 
   if (!result.ok || !result.data?.items?.length) return null;
 
@@ -197,7 +203,11 @@ async function fetchEspnGameLogsForSeason(
   maxGames: number
 ): Promise<GameLog[]> {
   const url = `${ESPN_GAMELOG}/${athleteId}/gamelog?season=${season}`;
-  const result = await fetchJson<unknown>(url, undefined, 15_000);
+  const result = await fetchJson<unknown>(
+    url,
+    { headers: ESPN_HEADERS },
+    15_000
+  );
   if (!result.ok || !result.data) return [];
 
   try {

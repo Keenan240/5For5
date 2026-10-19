@@ -44,11 +44,11 @@ type EspnRosterResponse = {
   }[];
 };
 
-function isEspnPlayerOut(status?: { type?: string; name?: string }): boolean {
-  const type = status?.type?.toLowerCase() ?? "";
-  const name = status?.name?.trim().toUpperCase() ?? "";
-  return type === "out" || name === "OUT";
-}
+const ESPN_HEADERS: HeadersInit = {
+  "User-Agent":
+    "Mozilla/5.0 (compatible; 5For5/1.0; +https://github.com/Keenan240/5For5)",
+  Accept: "application/json",
+};
 
 /** Live roster from ESPN (updates with trades; does not time out like stats.nba.com) */
 export async function fetchRostersFromEspn(
@@ -62,14 +62,19 @@ export async function fetchRostersFromEspn(
       if (!slug) return;
 
       const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${slug}/roster`;
-      const result = await fetchJson<EspnRosterResponse>(url, undefined, 12_000);
+      const result = await fetchJson<EspnRosterResponse>(
+        url,
+        { headers: ESPN_HEADERS },
+        10_000
+      );
       if (!result.ok || !result.data?.athletes) return;
 
       for (const a of result.data.athletes) {
         const name = (a.displayName || a.fullName || "").trim();
         if (!name) continue;
         const statusType = a.status?.type?.toLowerCase() ?? "";
-        if (statusType === "inactive" || isEspnPlayerOut(a.status)) continue;
+        // Skip only inactive entries; discovery drops short logs itself.
+        if (statusType === "inactive") continue;
         const espnAthleteId =
           a.id != null && String(a.id).length > 0 ? String(a.id) : undefined;
         players.push({

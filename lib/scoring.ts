@@ -370,7 +370,8 @@ async function evaluatePlayerH2h(
     p.player,
     idMap,
     fullLogCache,
-    p.nbaPlayerId
+    p.nbaPlayerId,
+    p.espnAthleteId
   );
 
   let vsOpp = gamesVsOpponent(fullLogs, p.team, opponent);

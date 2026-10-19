@@ -69,6 +69,13 @@ export async function loadPlayerIdMap(): Promise<Map<string, string>> {
     return playerIdCache;
   }
 
+  // stats.nba.com blocks Vercel/datacenter IPs — discovery uses ESPN athlete IDs.
+  if (process.env.VERCEL) {
+    playerIdCache = new Map();
+    playerIdCacheSeason = season;
+    return playerIdCache;
+  }
+
   const url = `https://stats.nba.com/stats/commonallplayers?LeagueID=00&Season=${season}&IsOnlyCurrentSeason=1`;
   const result = await fetchJson<{
     resultSets: { headers: string[]; rowSet: unknown[][] }[];
@@ -76,15 +83,16 @@ export async function loadPlayerIdMap(): Promise<Map<string, string>> {
 
   const map = new Map<string, string>();
 
-  if (result.ok && result.data) {
+  if (result.ok && result.data?.resultSets?.[0]) {
     const rs = result.data.resultSets[0];
-    const h = rs.headers;
+    const h = rs.headers ?? [];
     const nameIdx = h.indexOf("DISPLAY_FIRST_LAST");
     const idIdx = h.indexOf("PERSON_ID");
-
-    for (const row of rs.rowSet) {
-      const name = String(row[nameIdx]);
-      map.set(normalizeName(name), String(row[idIdx]));
+    if (nameIdx >= 0 && idIdx >= 0 && Array.isArray(rs.rowSet)) {
+      for (const row of rs.rowSet) {
+        const name = String(row[nameIdx] ?? "");
+        if (name) map.set(normalizeName(name), String(row[idIdx]));
+      }
     }
   }
 
@@ -121,12 +129,13 @@ async function fetchGameLogsForType(
     resultSets: { headers: string[]; rowSet: unknown[][] }[];
   }>(url, { headers: NBA_HEADERS }, NBA_TIMEOUT_MS);
 
-  if (!result.ok || !result.data) return [];
+  if (!result.ok || !result.data?.resultSets?.[0]) return [];
 
-  const rows = result.data.resultSets[0].rowSet;
+  const rs = result.data.resultSets[0];
+  const rows = rs.rowSet;
   if (!rows?.length) return [];
 
-  const h = result.data.resultSets[0].headers;
+  const h = rs.headers ?? [];
   const col = (name: string) => h.indexOf(name);
 
   return rows.map((r) => ({
@@ -276,14 +285,31 @@ export async function getPlayerFullGameLogs(
   playerName: string,
   idMap?: Map<string, string>,
   fullCache?: PlayerFullLogCache,
-  explicitNbaId?: string
+  explicitNbaId?: string,
+  espnAthleteId?: string
 ): Promise<GameLog[]> {
-  const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
-  if (playerId && fullCache?.has(playerId)) {
-    return fullCache.get(playerId)!;
+  const cacheKey = espnAthleteId
+    ? `espn:${espnAthleteId}`
+    : explicitNbaId
+      ? `nba:${explicitNbaId}`
+      : `name:${playerName}`;
+  if (fullCache?.has(cacheKey)) {
+    return fullCache.get(cacheKey)!;
   }
 
   let logs: GameLog[] = [];
+
+  // Prefer ESPN on Vercel (NBA stats blocked) or when roster already has athlete id.
+  if (espnAthleteId || process.env.VERCEL) {
+    logs = await getEspnGameLogs(playerName, 82, espnAthleteId);
+    logs = officialNewestFirst(logs);
+    if (logs.length > 0) {
+      fullCache?.set(cacheKey, logs);
+      return logs;
+    }
+  }
+
+  const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
   if (playerId) {
     logs = await fetchAllGameLogs(playerId);
   }
@@ -294,7 +320,7 @@ export async function getPlayerFullGameLogs(
     (logs.length > 0 && matchupRows < Math.min(5, logs.length));
 
   if (needsEspn) {
-    const espnLogs = await getEspnGameLogs(playerName, 82);
+    const espnLogs = await getEspnGameLogs(playerName, 82, espnAthleteId);
     if (espnLogs.length) {
       logs =
         logs.length === 0
@@ -304,7 +330,7 @@ export async function getPlayerFullGameLogs(
   }
 
   logs = officialNewestFirst(logs);
-  if (playerId && fullCache) fullCache.set(playerId, logs);
+  if (fullCache) fullCache.set(cacheKey, logs);
   return logs;
 }
 
@@ -331,11 +357,16 @@ export async function getLast5Games(
 
   // Prefer ESPN when we already have the athlete id from roster (skips search + NBA).
   // Pull a wider window so slate-night / edge filters still leave 5 official games.
-  if (espnAthleteId) {
+  if (espnAthleteId || process.env.VERCEL) {
     const espnLogs = await getEspnGameLogs(playerName, 15, espnAthleteId);
     last5 = takeLast5Official(espnLogs, opts);
     if (last5.length >= 5) {
       cache?.set(cacheKey, last5);
+      return last5;
+    }
+    // stats.nba.com is blocked from Vercel — don't fall through.
+    if (process.env.VERCEL) {
+      if (last5.length > 0) cache?.set(cacheKey, last5);
       return last5;
     }
   }

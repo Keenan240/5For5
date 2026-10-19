@@ -114,10 +114,10 @@ export async function runCreateParlay(
   });
 
   if (slate.players.length === 0) {
-    emit({
-      type: "phase",
-      message: "Warning: no roster players loaded for tonight's teams.",
-    });
+    const message =
+      "Couldn't load team rosters for this slate (ESPN roster blocked or empty). Try again in a moment.";
+    emit({ type: "error", error: message });
+    return { ok: false, message, state, error: message };
   }
 
   emit({

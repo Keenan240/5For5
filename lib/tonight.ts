@@ -349,21 +349,34 @@ async function resolveRostersForTeams(abbrevs: string[]): Promise<{
     .map((a) => nbaTeamId(a))
     .filter((id): id is number => id != null);
 
-  const byEspn = await fetchRostersFromEspn(abbrevs);
-  if (byEspn.length > 0) {
-    return { players: byEspn, rosterSource: "espn", teamIds };
+  try {
+    const byEspn = await fetchRostersFromEspn(abbrevs);
+    if (byEspn.length > 0) {
+      return { players: byEspn, rosterSource: "espn", teamIds };
+    }
+  } catch (err) {
+    console.error("ESPN roster fetch failed:", err);
   }
 
-  const [byTeam, byAll] = await Promise.all([
-    fetchRostersByAbbreviations(abbrevs),
-    fetchRosterViaCommonAllPlayers(abbrevs),
-  ]);
-
-  if (byTeam.length > 0) {
-    return { players: byTeam, rosterSource: "nba-team-roster", teamIds };
+  // stats.nba.com is unreliable from Vercel — keep a short fallback only.
+  if (process.env.VERCEL) {
+    return { players: [], rosterSource: "none", teamIds };
   }
-  if (byAll.length > 0) {
-    return { players: byAll, rosterSource: "nba-all-players", teamIds };
+
+  try {
+    const [byTeam, byAll] = await Promise.all([
+      fetchRostersByAbbreviations(abbrevs),
+      fetchRosterViaCommonAllPlayers(abbrevs),
+    ]);
+
+    if (byTeam.length > 0) {
+      return { players: byTeam, rosterSource: "nba-team-roster", teamIds };
+    }
+    if (byAll.length > 0) {
+      return { players: byAll, rosterSource: "nba-all-players", teamIds };
+    }
+  } catch (err) {
+    console.error("NBA roster fallback failed:", err);
   }
 
   return { players: [], rosterSource: "none", teamIds };
