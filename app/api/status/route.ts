@@ -4,9 +4,10 @@ import { getState, setState, storageMode } from "@/lib/kv";
 import { enrichPendingEspnIds } from "@/lib/pending";
 import { getSettleLockStatus } from "@/lib/settle-lock";
 import { getSlateForDate, getTodayEastern } from "@/lib/tonight";
+import type { ParlayState } from "@/lib/types";
 
-const SETTLE_LOCK_BUDGET_MS = 4_000;
-const ENRICH_BUDGET_MS = 2_000;
+const SETTLE_LOCK_BUDGET_MS = 3_000;
+const ENRICH_BUDGET_MS = 1_500;
 
 function serializeLock(
   settleLock: Awaited<ReturnType<typeof getSettleLockStatus>>
@@ -26,15 +27,29 @@ function serializeLock(
   };
 }
 
+/** Race a promise against a timeout; never reject (status must stay 200). */
 async function withBudget<T>(
   promise: Promise<T>,
   ms: number,
   fallback: T
 ): Promise<T> {
   return Promise.race([
-    promise,
+    promise.then(
+      (v) => v,
+      () => fallback
+    ),
     new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
   ]);
+}
+
+async function safeSetState(state: ParlayState): Promise<boolean> {
+  try {
+    await setState(state);
+    return true;
+  } catch (err) {
+    console.error("status setState skipped:", err);
+    return false;
+  }
 }
 
 /** Prefer a nearby night that actually has games when the requested date is empty. */
@@ -57,6 +72,29 @@ async function resolveSlate(
   return slate;
 }
 
+function emptyPayload(
+  focusDate: string,
+  state: ParlayState,
+  error?: string
+) {
+  return {
+    ...state,
+    storage: storageMode(),
+    qualifiedCount: null,
+    sliderMax: 8,
+    slate: {
+      date: focusDate,
+      games: [],
+      rosterCount: 0,
+      source: "espn" as const,
+      rosterSource: "none" as const,
+    },
+    settleLock: null,
+    settleLocks: {},
+    error: error ?? undefined,
+  };
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const dateParam = url.searchParams.get("date");
@@ -64,46 +102,82 @@ export async function GET(request: Request) {
     dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null;
   const fresh = url.searchParams.get("fresh") === "1";
   const focusDate = date ?? getTodayEastern();
-  // Boot / silent refresh can skip empty nights; date-strip picks stay put.
   const allowAdvance = url.searchParams.get("advance") === "1";
 
-  // Slate first — never block game load on pending enrich / settle polls.
-  const slatePromise = resolveSlate(focusDate, fresh, allowAdvance);
+  let state: ParlayState = {
+    bankroll: 0,
+    pending: [],
+    history: [],
+  };
 
-  let state = await getState();
-  const reconciled = reconcileBankroll(state);
-  if (reconciled.bankroll !== state.bankroll) {
-    await setState(reconciled);
-    state = reconciled;
+  try {
+    state = await getState();
+    const reconciled = reconcileBankroll(state);
+    if (reconciled.bankroll !== state.bankroll) {
+      await safeSetState(reconciled);
+      state = reconciled;
+    }
+  } catch (err) {
+    console.error("status getState failed:", err);
   }
 
-  const [slate, enriched] = await Promise.all([
-    slatePromise,
-    withBudget(
+  let slate;
+  try {
+    slate = await resolveSlate(focusDate, fresh, allowAdvance);
+  } catch (err) {
+    console.error("status slate failed:", err);
+    return Response.json(
+      emptyPayload(
+        focusDate,
+        state,
+        err instanceof Error ? err.message : "slate_failed"
+      )
+    );
+  }
+
+  try {
+    const enriched = await withBudget(
       enrichPendingEspnIds(state),
       ENRICH_BUDGET_MS,
       { state, changed: false as const }
-    ),
-  ]);
-
-  if (enriched.changed) {
-    await setState(enriched.state);
-    state = enriched.state;
+    );
+    if (enriched.changed) {
+      await safeSetState(enriched.state);
+      state = enriched.state;
+    }
+  } catch (err) {
+    console.error("status enrich skipped:", err);
   }
 
   let settleLocks: Record<string, ReturnType<typeof serializeLock>> = {};
   if (state.pending.length > 0) {
-    const locks = await withBudget(
-      Promise.all(
-        state.pending.map(
-          async (p) =>
-            [p.date, serializeLock(await getSettleLockStatus(p))] as const
-        )
-      ),
-      SETTLE_LOCK_BUDGET_MS,
-      null
-    );
-    if (locks) settleLocks = Object.fromEntries(locks);
+    try {
+      const locks = await withBudget(
+        Promise.all(
+          state.pending.map(async (p) => {
+            try {
+              return [
+                p.date,
+                serializeLock(await getSettleLockStatus(p)),
+              ] as const;
+            } catch {
+              return null;
+            }
+          })
+        ).then(
+          (rows) =>
+            Object.fromEntries(
+              rows.filter((r): r is NonNullable<typeof r> => r != null)
+            ),
+          () => ({})
+        ),
+        SETTLE_LOCK_BUDGET_MS,
+        {}
+      );
+      settleLocks = locks;
+    } catch (err) {
+      console.error("status settleLocks skipped:", err);
+    }
   }
 
   const focusPending =

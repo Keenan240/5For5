@@ -215,6 +215,12 @@ function normalizeBdlGameDate(g: BdlGame): string {
   return raw;
 }
 
+const ESPN_HEADERS: HeadersInit = {
+  "User-Agent":
+    "Mozilla/5.0 (compatible; 5For5/1.0; +https://github.com/Keenan240/5For5)",
+  Accept: "application/json",
+};
+
 async function getSlateFromEspn(
   date: string,
   gamesOnly = false
@@ -233,7 +239,7 @@ async function getSlateFromEspn(
         status?: { type?: { description?: string; detail?: string } };
       }[];
     }[];
-  }>(url, undefined, 10_000);
+  }>(url, { headers: ESPN_HEADERS }, 8_000);
 
   if (!result.ok || !result.data?.events?.length) {
     return emptySlate(date, "espn");

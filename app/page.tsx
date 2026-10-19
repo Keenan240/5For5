@@ -363,13 +363,16 @@ export default function Home() {
         if (fresh) qs.set("fresh", "1");
         const res = await fetch(`/api/status?${qs.toString()}`);
         const data = await res.json().catch(() => null);
-        if (!res.ok || !data?.slate) {
+        if (!data?.slate) {
           throw new Error(
             data?.error || `status ${res.status || "failed"}`
           );
         }
         setState(data);
-        setMessage(null);
+        // Only clear sticky error once we have real games (or an intentional empty night).
+        if (data.slate.games?.length > 0 || res.ok) {
+          setMessage(null);
+        }
         // Keep date strip in sync when server skipped an empty night.
         if (
           !opts?.date &&
@@ -428,7 +431,7 @@ export default function Home() {
           }
         : prev
     );
-    await fetchStatus({ date: ymd, silent: false, fresh: true });
+    await fetchStatus({ date: ymd, silent: true, fresh: true });
   }
 
   useEffect(() => {
