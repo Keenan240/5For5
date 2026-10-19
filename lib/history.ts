@@ -26,19 +26,25 @@ export function reconcileBankroll(state: ParlayState): ParlayState {
 export async function deleteHistoryEntry(
   index: number,
   userId?: string | null
-): Promise<{ ok: boolean; state: ParlayState; error?: string }> {
+): Promise<{
+  ok: boolean;
+  state: ParlayState;
+  error?: string;
+  deletedDate?: string;
+}> {
   const state = await getState(userId);
 
   if (index < 0 || index >= state.history.length) {
     return { ok: false, state, error: "Invalid history index." };
   }
 
+  const deletedDate = state.history[index]?.date;
   const history = state.history.filter((_, i) => i !== index);
   const next: ParlayState = { ...state, history };
   next.bankroll = bankrollFromHistory(next);
 
   await setState(next, userId);
-  return { ok: true, state: next };
+  return { ok: true, state: next, deletedDate };
 }
 
 export async function backfillHistoryRanked(

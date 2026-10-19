@@ -9,6 +9,8 @@ export type CancelPendingParlayResult = {
   message: string;
   state: ParlayState;
   error?: string;
+  /** Slate date that was cancelled (when ok). */
+  cancelledDate?: string;
 };
 
 export async function runCancelPendingParlay(
@@ -52,5 +54,6 @@ export async function runCancelPendingParlay(
     ok: true,
     message: `Pending parlay cancelled for ${pending.date}.`,
     state: newState,
+    cancelledDate: pending.date,
   };
 }

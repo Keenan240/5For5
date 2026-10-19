@@ -38,6 +38,7 @@ type ParlaySheetProps = {
   maxLegs: number;
   oddsByLeg: Record<string, string>;
   onOddsChange: (key: string, value: string) => void;
+  onRemovePick?: (key: string) => void;
   draftMath: DraftMath;
   placeError: string | null;
   onPlace: () => void;
@@ -51,9 +52,26 @@ type ParlaySheetProps = {
   onStakeChange: (stake: StakeTier) => void;
 };
 
-const COLLAPSED_H = 120; // ~7.5rem
+/** Visible title/handle above the floating nav pill. */
+const COLLAPSED_PEEK = 100;
 const SNAP_VELOCITY = 0.45; // px/ms
 const TAP_SLOP = 8; // px — treat as tap if movement under this
+
+function navClearancePx(): number {
+  if (typeof window === "undefined") return 76;
+  const probe = document.createElement("div");
+  probe.style.cssText =
+    "position:absolute;visibility:hidden;pointer-events:none;height:var(--bottom-nav-clearance)";
+  document.body.appendChild(probe);
+  const h = probe.offsetHeight;
+  probe.remove();
+  return h > 0 ? h : 76;
+}
+
+/** Sheet always reaches the screen bottom; collapsed peek sits above the nav. */
+function collapsedHeight(): number {
+  return COLLAPSED_PEEK + navClearancePx();
+}
 
 function expandedHeight(): number {
   if (typeof window === "undefined") return 480;
@@ -90,11 +108,45 @@ function LegSkeleton({ delayMs }: { delayMs: number }) {
   );
 }
 
+function RemoveLegButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label="Remove leg"
+      className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[var(--border-strong)] text-[var(--text-muted)] transition-colors active:bg-[var(--surface-muted)] disabled:opacity-40"
+    >
+      <svg
+        width="10"
+        height="10"
+        viewBox="0 0 10 10"
+        fill="none"
+        aria-hidden
+      >
+        <path
+          d="M2 5h6"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+    </button>
+  );
+}
+
 export function ParlaySheet({
   picks,
   maxLegs,
   oddsByLeg,
   onOddsChange,
+  onRemovePick,
   draftMath,
   placeError,
   onPlace,
@@ -111,10 +163,19 @@ export function ParlaySheet({
   const [entered, setEntered] = useState(false);
   const [expanded, setExpanded] = useState(generating);
   const [maxH, setMaxH] = useState(expandedHeight);
+  const [minH, setMinH] = useState(collapsedHeight);
   const [height, setHeight] = useState(() =>
-    generating ? expandedHeight() : COLLAPSED_H
+    generating ? expandedHeight() : collapsedHeight()
   );
   const [dragging, setDragging] = useState(false);
+
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const heightRef = useRef(height);
+  heightRef.current = height;
+  const minHRef = useRef(minH);
+  minHRef.current = minH;
+  const maxHRef = useRef(maxH);
+  maxHRef.current = maxH;
 
   const dragRef = useRef<{
     pointerId: number;
@@ -132,7 +193,10 @@ export function ParlaySheet({
   }, []);
 
   useLayoutEffect(() => {
-    const sync = () => setMaxH(expandedHeight());
+    const sync = () => {
+      setMaxH(expandedHeight());
+      setMinH(collapsedHeight());
+    };
     sync();
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
@@ -144,12 +208,20 @@ export function ParlaySheet({
 
   useEffect(() => {
     if (dragging) return;
-    setHeight(expanded ? maxH : COLLAPSED_H);
-  }, [expanded, maxH, dragging]);
+    const next = expanded ? maxH : minH;
+    setHeight(next);
+    if (sheetRef.current) {
+      sheetRef.current.style.height = `${next}px`;
+    }
+  }, [expanded, maxH, minH, dragging]);
 
   const snapTo = useCallback((open: boolean) => {
     setExpanded(open);
-    setHeight(open ? expandedHeight() : COLLAPSED_H);
+    const next = open ? expandedHeight() : collapsedHeight();
+    setHeight(next);
+    if (sheetRef.current) {
+      sheetRef.current.style.height = `${next}px`;
+    }
   }, []);
 
   const onHandlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -159,7 +231,7 @@ export function ParlaySheet({
     dragRef.current = {
       pointerId: e.pointerId,
       startY: e.clientY,
-      startH: height,
+      startH: heightRef.current,
       lastY: e.clientY,
       lastT: now,
       velocity: 0,
@@ -174,18 +246,27 @@ export function ParlaySheet({
     const now = performance.now();
     const dy = d.startY - e.clientY; // up = taller
     if (Math.abs(e.clientY - d.startY) > TAP_SLOP) d.moved = true;
-    const next = Math.min(maxH, Math.max(COLLAPSED_H, d.startH + dy));
+    const next = Math.min(
+      maxHRef.current,
+      Math.max(minHRef.current, d.startH + dy)
+    );
     const dt = Math.max(1, now - d.lastT);
     d.velocity = (d.lastY - e.clientY) / dt; // up positive
     d.lastY = e.clientY;
     d.lastT = now;
-    setHeight(next);
+    heightRef.current = next;
+    // Direct DOM write so the sheet tracks the finger 1:1 without React lag.
+    if (sheetRef.current) {
+      sheetRef.current.style.height = `${next}px`;
+    }
   };
 
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = dragRef.current;
     if (!d || d.pointerId !== e.pointerId) return;
     dragRef.current = null;
+    const currentH = heightRef.current;
+    setHeight(currentH);
     setDragging(false);
 
     if (!d.moved) {
@@ -193,24 +274,25 @@ export function ParlaySheet({
       return;
     }
 
-    const mid = (COLLAPSED_H + maxH) / 2;
+    const mid = (minHRef.current + maxHRef.current) / 2;
     if (d.velocity > SNAP_VELOCITY) {
       snapTo(true);
     } else if (d.velocity < -SNAP_VELOCITY) {
       snapTo(false);
     } else {
-      snapTo(height >= mid);
+      snapTo(currentH >= mid);
     }
   };
 
   if (!show) return null;
 
   const ready = !generating && !loading && n === maxLegs && draftMath?.valid;
-  const contentOpen = expanded || height > COLLAPSED_H + 24;
+  const contentOpen = expanded || height > minH + 24 || dragging;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 mx-auto max-w-md px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 mx-auto max-w-md px-3">
       <div
+        ref={sheetRef}
         className={`pointer-events-auto flex flex-col overflow-hidden rounded-t-3xl bg-[var(--surface)] shadow-[0_-8px_40px_rgba(0,0,0,0.12)] ring-1 ring-[var(--border)] ${
           entered
             ? "translate-y-0 opacity-100"
@@ -309,9 +391,20 @@ export function ParlaySheet({
                           threshold={pick.threshold}
                           stat={pick.stat}
                           action={
-                            <span className="rounded-full border border-[var(--border-strong)] bg-white px-3 py-1.5 text-[12px] font-medium text-[var(--text)]">
-                              {formatMilestoneLabel(pick.stat, pick.threshold)}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="rounded-full border border-[var(--border-strong)] bg-white px-3 py-1.5 text-[12px] font-medium text-[var(--text)]">
+                                {formatMilestoneLabel(
+                                  pick.stat,
+                                  pick.threshold
+                                )}
+                              </span>
+                              {onRemovePick && (
+                                <RemoveLegButton
+                                  disabled={loading}
+                                  onClick={() => onRemovePick(key)}
+                                />
+                              )}
+                            </div>
                           }
                           footer={
                             <div
@@ -380,7 +473,7 @@ export function ParlaySheet({
               )}
             </div>
 
-            <div className="shrink-0 border-t border-[var(--border)] px-4 pb-3 pt-2">
+            <div className="shrink-0 border-t border-[var(--border)] px-4 pt-2 pb-[calc(var(--bottom-nav-clearance)+0.5rem)]">
               <button
                 type="button"
                 onClick={onPlace}

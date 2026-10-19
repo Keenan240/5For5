@@ -1,5 +1,6 @@
 import { requireSessionUser } from "@/lib/auth-user";
 import { runCancelPendingParlay } from "@/lib/cancel-pending-parlay";
+import { removeCommunityFeedItem } from "@/lib/community-feed";
 
 export async function POST(request: Request) {
   try {
@@ -25,6 +26,12 @@ export async function POST(request: Request) {
           state: result.state,
         },
         { status: 400 }
+      );
+    }
+
+    if (gate.user.id !== "local" && result.cancelledDate) {
+      void removeCommunityFeedItem(gate.user.id, result.cancelledDate).catch(
+        (err) => console.error("community feed remove failed:", err)
       );
     }
 

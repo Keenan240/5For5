@@ -357,6 +357,20 @@ export default function Home() {
     setPlaceError(null);
   }
 
+  function removeSheetPick(key: string) {
+    setPlaceError(null);
+    setOddsByLeg((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setRankedPicks((prev) =>
+      prev.map((p) =>
+        legKey(p) === key ? { ...p, selected: false } : p
+      )
+    );
+  }
+
   const fetchStatus = useCallback(
     async (opts?: { silent?: boolean; date?: string; fresh?: boolean }) => {
       const silent = opts?.silent ?? false;
@@ -1034,8 +1048,8 @@ export default function Home() {
         appTab === "home" &&
         (selectedCount > 0 || suggesting) &&
         !viewPending
-          ? "pb-44"
-          : "pb-28"
+          ? "pb-[calc(var(--bottom-nav-clearance)+11rem)]"
+          : "pb-[calc(var(--bottom-nav-clearance)+1.5rem)]"
       } ${booting ? "opacity-0" : "opacity-100"}`}
     >
       <header className="mb-5 flex items-center justify-between gap-3">
@@ -1415,6 +1429,7 @@ export default function Home() {
           maxLegs={PARLAY_LEG_COUNT}
           oddsByLeg={oddsByLeg}
           onOddsChange={setOddsForLeg}
+          onRemovePick={removeSheetPick}
           draftMath={draftMath}
           placeError={placeError}
           onPlace={handlePlace}

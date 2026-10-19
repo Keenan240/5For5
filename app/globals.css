@@ -25,12 +25,25 @@
   --accent-bg: rgba(22, 163, 74, 0.12);
   --warn: #d97706;
   --danger: #dc2626;
+  /* Floating pill nav + safe area — sheet/content clear this */
+  --bottom-nav-clearance: calc(4.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+html {
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+  height: 100%;
 }
 
 body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+  min-height: 100%;
+  /* Avoid rubber-band pull past top on iOS Safari */
+  overflow-x: hidden;
 }
 
 .auth-landing {

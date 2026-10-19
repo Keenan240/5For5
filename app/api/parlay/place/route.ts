@@ -1,6 +1,8 @@
 import { requireSessionUser } from "@/lib/auth-user";
+import { publishCommunityPlacement } from "@/lib/community-feed";
 import { isStakeTier } from "@/lib/odds";
 import { runPlaceParlay } from "@/lib/place-parlay";
+import { getUser } from "@/lib/users";
 import type { ParlayLeg, RankedPoolPick } from "@/lib/types";
 
 export async function POST(request: Request) {
@@ -39,6 +41,16 @@ export async function POST(request: Request) {
         },
         { status: 400 }
       );
+    }
+
+    const placed = result.state.pending.find((p) => p.date === date);
+    if (placed && gate.user.id !== "local") {
+      const profile = await getUser(gate.user.id);
+      if (profile) {
+        void publishCommunityPlacement(profile, placed).catch((err) =>
+          console.error("community feed publish failed:", err)
+        );
+      }
     }
 
     return Response.json({

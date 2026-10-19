@@ -1,4 +1,5 @@
 import { requireSessionUser } from "@/lib/auth-user";
+import { settleCommunityFeedItem } from "@/lib/community-feed";
 import { getState, setState } from "@/lib/kv";
 import { syncLeaderboardForUser } from "@/lib/leaderboard";
 import { getSettleLockStatus, clearSettleLockForDate } from "@/lib/settle-lock";
@@ -76,6 +77,12 @@ export async function POST(request: Request) {
         void syncLeaderboardForUser(profile, newState).catch((err) =>
           console.error("leaderboard sync failed:", err)
         );
+        const settled = newState.history.find((h) => h.date === target.date);
+        if (settled) {
+          void settleCommunityFeedItem(profile, settled).catch((err) =>
+            console.error("community feed settle failed:", err)
+          );
+        }
       }
     }
 

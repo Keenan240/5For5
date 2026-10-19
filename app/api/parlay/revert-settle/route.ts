@@ -1,6 +1,8 @@
 import { requireSessionUser } from "@/lib/auth-user";
+import { reopenCommunityFeedItem } from "@/lib/community-feed";
 import { revertLastSettle } from "@/lib/revert-settle";
 import { getSettleLockStatus } from "@/lib/settle-lock";
+import { getUser } from "@/lib/users";
 
 export async function POST() {
   try {
@@ -13,6 +15,16 @@ export async function POST() {
         { ok: false, error: result.error, state: result.state },
         { status: 400 }
       );
+    }
+
+    if (gate.user.id !== "local") {
+      const profile = await getUser(gate.user.id);
+      const pending = result.state.pending[result.state.pending.length - 1];
+      if (profile && pending) {
+        void reopenCommunityFeedItem(profile, pending).catch((err) =>
+          console.error("community feed reopen failed:", err)
+        );
+      }
     }
 
     const focus = result.state.pending[0] ?? null;

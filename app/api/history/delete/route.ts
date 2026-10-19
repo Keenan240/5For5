@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireSessionUser } from "@/lib/auth-user";
+import { removeCommunityFeedItem } from "@/lib/community-feed";
 import { deleteHistoryEntry } from "@/lib/history";
 import { syncLeaderboardForUser } from "@/lib/leaderboard";
 import { getUser } from "@/lib/users";
@@ -27,6 +28,11 @@ export async function POST(request: Request) {
       const profile = await getUser(gate.user.id);
       if (profile) {
         void syncLeaderboardForUser(profile, result.state).catch(() => {});
+      }
+      if (result.deletedDate) {
+        void removeCommunityFeedItem(gate.user.id, result.deletedDate).catch(
+          () => {}
+        );
       }
     }
 

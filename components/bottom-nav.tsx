@@ -12,7 +12,7 @@ type BottomNavProps = {
 export function BottomNav({ tab, onChange }: BottomNavProps) {
   return (
     <nav
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-30 flex justify-center pb-[max(1.75rem,calc(env(safe-area-inset-bottom)+1.25rem))]"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center pb-[max(1.75rem,calc(env(safe-area-inset-bottom)+1.25rem))]"
       aria-label="Main"
     >
       <div className="pointer-events-auto flex w-[13.5rem] items-center gap-0.5 rounded-full bg-[var(--surface)] p-1 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] ring-1 ring-[var(--border)]">

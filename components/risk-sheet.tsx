@@ -17,17 +17,17 @@ const OPTIONS: {
   {
     risk: "LOW",
     title: "Low",
-    blurb: "Safer floors (e.g. 2+ AST).",
+    blurb: "Safe floors — consistent beaters, smaller payouts.",
   },
   {
     risk: "MEDIUM",
     title: "Medium",
-    blurb: "Middle of the ladder.",
+    blurb: "Right in between low and high.",
   },
   {
     risk: "HIGH",
     title: "High",
-    blurb: "Juiciest 5/5 lines (e.g. 4+ AST).",
+    blurb: "Higher totals, closer to the floor — better odds.",
   },
 ];
 
@@ -68,7 +68,7 @@ export function RiskSheet({ open, onPick, onClose }: RiskSheetProps) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="risk-sheet-title"
-        className={`relative z-10 w-full max-w-md rounded-t-2xl bg-[var(--bg-card)] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl ring-1 ring-[var(--border)] transition-transform duration-250 ${
+        className={`relative z-10 w-full max-w-md rounded-t-2xl bg-[var(--bg-card)] px-4 pb-[max(2.75rem,calc(env(safe-area-inset-bottom)+1.75rem))] pt-3 shadow-2xl ring-1 ring-[var(--border)] transition-transform duration-250 ${
           entered ? "translate-y-0" : "translate-y-full"
         }`}
       >
@@ -84,7 +84,7 @@ export function RiskSheet({ open, onPick, onClose }: RiskSheetProps) {
         <p className="mt-1 mb-4 text-center text-xs text-[var(--text-muted)]">
           Sets which milestone lines Suggest 5 picks.
         </p>
-        <div className="space-y-2">
+        <div className="space-y-2 pb-2">
           {OPTIONS.map((opt) => (
             <button
               key={opt.risk}
