@@ -1017,7 +1017,9 @@ export default function Home() {
         {(booting || bootFading) && (
           <BootLoader progress={loadProgress} fadingOut={bootFading} />
         )}
-        <AuthLanding />
+        <div className="fixed inset-0 overflow-hidden overscroll-none">
+          <AuthLanding />
+        </div>
       </>
     );
   }

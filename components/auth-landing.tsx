@@ -4,7 +4,7 @@ import { signIn } from "next-auth/react";
 
 export function AuthLanding() {
   return (
-    <main className="auth-landing relative flex min-h-[100dvh] flex-col items-center justify-center overflow-hidden px-6 pb-16 pt-10">
+    <main className="auth-landing fixed inset-0 z-40 flex flex-col items-center justify-center overflow-hidden overscroll-none px-6 pb-16 pt-10">
       <div className="auth-landing-glow pointer-events-none absolute inset-0" aria-hidden />
 
       <div className="auth-landing-enter relative z-10 flex w-full max-w-sm flex-col items-center text-center">

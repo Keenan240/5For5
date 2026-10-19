@@ -34,14 +34,21 @@ body {
 }
 
 .auth-landing {
+  height: 100dvh;
+  max-height: 100dvh;
+  touch-action: none;
+  overscroll-behavior: none;
   background:
     radial-gradient(120% 80% at 50% -10%, #ffffff 0%, transparent 55%),
     linear-gradient(180deg, #ececf0 0%, var(--bg) 45%, #e8eee9 100%);
+  background-attachment: fixed;
 }
 
 .auth-landing-glow {
+  position: absolute;
+  inset: 0;
   background:
-    radial-gradient(ellipse 70% 40% at 50% 100%, rgba(22, 163, 74, 0.1), transparent 70%);
+    radial-gradient(ellipse 70% 45% at 50% 100%, rgba(22, 163, 74, 0.12), transparent 70%);
 }
 
 .auth-landing-enter {
