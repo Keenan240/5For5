@@ -16,6 +16,7 @@ export type ParlayLeg = {
   last5: number[];
   buffer: number;
   minutes?: number[];
+  espnAthleteId?: string;
 };
 
 export type RankedPoolPick = {
@@ -72,7 +73,8 @@ export type ParlayDraft = {
 
 export type ParlayState = {
   bankroll: number;
-  pending: PendingParlay | null;
+  /** At most one slip per calendar date; multiple nights may be pending at once. */
+  pending: PendingParlay[];
   history: SettledParlay[];
 };
 
@@ -100,4 +102,5 @@ export type QualifiedCandidate = {
   buffer: number;
   odds: number;
   score: number;
+  espnAthleteId?: string;
 };

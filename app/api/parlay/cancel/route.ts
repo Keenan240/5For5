@@ -1,8 +1,16 @@
 import { runCancelPendingParlay } from "@/lib/cancel-pending-parlay";
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    const result = await runCancelPendingParlay();
+    let date: string | undefined;
+    try {
+      const body = await request.json();
+      if (typeof body?.date === "string") date = body.date;
+    } catch {
+      /* empty body ok */
+    }
+
+    const result = await runCancelPendingParlay(date);
 
     if (!result.ok) {
       return Response.json(

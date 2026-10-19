@@ -12,6 +12,7 @@ import {
   getLast5GamesFromEspn,
   getLatestGameStatFromEspn,
 } from "./espn";
+import { nbaSeasonYear } from "./bdl-client";
 import { looksLikeMatchup } from "./h2h";
 import { STAT_KEY } from "./milestones";
 import { cachedFetch, SETTLE_POLL_CACHE_MS } from "./stats-cache";
@@ -48,7 +49,7 @@ export type LegForSlateCheck = {
 };
 
 function seasonLabel(): string {
-  const y = parseInt(process.env.NBA_SEASON || "2025", 10);
+  const y = nbaSeasonYear();
   return `${y}-${String(y + 1).slice(-2)}`;
 }
 
@@ -144,16 +145,21 @@ async function fetchGameLogsForType(
 }
 
 async function fetchAllGameLogs(playerId: string): Promise<GameLog[]> {
-  const cacheKey = `nba-logs:v2:${playerId}`;
-  return cachedFetch(cacheKey, async () => {
-    const [regular, playoffs] = await Promise.all([
-      fetchGameLogsForType(playerId, "Regular Season"),
-      fetchGameLogsForType(playerId, "Playoffs"),
-    ]);
-    return [...regular, ...playoffs].sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
-  });
+  // v3: never mix Preseason into discovery last-5 (NBA API path is RS+PO only).
+  const cacheKey = `nba-logs:v3:${playerId}`;
+  return cachedFetch(
+    cacheKey,
+    async () => {
+      const regular = await fetchGameLogsForType(playerId, "Regular Season");
+      // Skip playoff fetch when regular season already has enough recent games.
+      if (regular.length >= 8) {
+        return officialNewestFirst(regular);
+      }
+      const playoffs = await fetchGameLogsForType(playerId, "Playoffs");
+      return officialNewestFirst([...regular, ...playoffs]);
+    },
+    10 * 60_000
+  );
 }
 
 async function findNbaGameOnSlate(
@@ -192,21 +198,50 @@ function isOnSlateNight(logDate: string, slateYmd: string): boolean {
   return slateDateCandidates(slateYmd).includes(ymd);
 }
 
+/**
+ * Counting games for last-5 / discovery: regular season + playoffs only.
+ * Preseason / exhibition must never enter the window (matches StatMuse / books).
+ */
+export function isOfficialNbaGame(g: GameLog): boolean {
+  if (!g.seasonType) return true;
+  return g.seasonType === "Regular Season" || g.seasonType === "Playoffs";
+}
+
+export function officialGameLogs(logs: GameLog[]): GameLog[] {
+  return logs.filter(isOfficialNbaGame);
+}
+
+/** Newest → oldest official games, optionally excluding the slate calendar night. */
+function officialNewestFirst(
+  logs: GameLog[],
+  opts?: Last5GamesOptions
+): GameLog[] {
+  let next = officialGameLogs(logs);
+  if (opts?.beforeSlateYmd) {
+    next = next.filter((g) => !isOnSlateNight(g.date, opts.beforeSlateYmd!));
+  }
+  return [...next].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  );
+}
+
+/** Last 5 official games in chronological order (oldest → newest). */
+export function takeLast5Official(
+  logs: GameLog[],
+  opts?: Last5GamesOptions
+): GameLog[] {
+  return officialNewestFirst(logs, opts).slice(0, 5).reverse();
+}
+
 async function fetchLast5FromNba(
   playerId: string,
   cache?: PlayerLogCache,
   opts?: Last5GamesOptions
 ): Promise<GameLog[]> {
-  const key = last5CacheKey(playerId, opts);
+  const key = last5CacheKey(`nba:${playerId}`, opts);
   if (cache?.has(key)) return cache.get(key)!;
 
-  let combined = await fetchAllGameLogs(playerId);
-  if (opts?.beforeSlateYmd) {
-    combined = combined.filter(
-      (g) => !isOnSlateNight(g.date, opts.beforeSlateYmd!)
-    );
-  }
-  const last5 = combined.slice(0, 5).reverse();
+  const last5 = takeLast5Official(await fetchAllGameLogs(playerId), opts);
   cache?.set(key, last5);
   return last5;
 }
@@ -269,39 +304,57 @@ export async function getPlayerFullGameLogs(
     }
   }
 
+  logs = officialNewestFirst(logs);
   if (playerId && fullCache) fullCache.set(playerId, logs);
   return logs;
 }
 
-/** Last 5 games — NBA stats when available, ESPN when NBA fails */
+/** Last 5 official games (RS + playoffs) — ESPN first when athlete id known. */
 export async function getLast5Games(
   playerName: string,
   idMap?: Map<string, string>,
   cache?: PlayerLogCache,
   explicitNbaId?: string,
-  opts?: Last5GamesOptions
+  opts?: Last5GamesOptions,
+  espnAthleteId?: string
 ): Promise<GameLog[]> {
-  const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
+  const cacheKey = last5CacheKey(
+    espnAthleteId
+      ? `espn:${espnAthleteId}`
+      : explicitNbaId
+        ? `nba:${explicitNbaId}`
+        : `name:${playerName}`,
+    opts
+  );
+  if (cache?.has(cacheKey)) return cache.get(cacheKey)!;
+
   let last5: GameLog[] = [];
 
+  // Prefer ESPN when we already have the athlete id from roster (skips search + NBA).
+  // Pull a wider window so slate-night / edge filters still leave 5 official games.
+  if (espnAthleteId) {
+    const espnLogs = await getEspnGameLogs(playerName, 15, espnAthleteId);
+    last5 = takeLast5Official(espnLogs, opts);
+    if (last5.length >= 5) {
+      cache?.set(cacheKey, last5);
+      return last5;
+    }
+  }
+
+  const playerId = await getPlayerId(playerName, idMap, explicitNbaId);
   if (playerId) {
     last5 = await fetchLast5FromNba(playerId, cache, opts);
   }
 
   if (last5.length < 5) {
-    const espnLogs = opts?.beforeSlateYmd
-      ? (await getEspnGameLogs(playerName, 40)).filter(
-          (g) => !isOnSlateNight(g.date, opts.beforeSlateYmd!)
-        ).slice(-5)
-      : await getLast5GamesFromEspn(playerName);
-    if (espnLogs.length >= last5.length) {
-      last5 = espnLogs;
-      if (playerId && cache) {
-        cache.set(last5CacheKey(playerId, opts), last5);
-      }
+    const espnLogs = await getEspnGameLogs(playerName, 20, espnAthleteId);
+    const fromEspn = takeLast5Official(espnLogs, opts);
+    if (fromEspn.length >= last5.length) {
+      last5 = fromEspn;
     }
   }
 
+  if (last5.length > 0) cache?.set(cacheKey, last5);
   return last5;
 }
 

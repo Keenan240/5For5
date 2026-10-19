@@ -23,8 +23,11 @@ import {
   formatAmerican,
   parseAmericanOdds,
   passesOddsCap,
+  stakeTierForRisk,
   stakeTierLabel,
   weakestStakeTier,
+  type RiskPreference,
+  type StakeTier,
 } from "@/lib/odds";
 import type {
   CreateProgressEvent,
@@ -34,7 +37,6 @@ import {
   defaultSelectedRanked,
   legKey,
   rankedToLeg,
-  toggleRankedSelection,
 } from "@/lib/parlay-selection";
 import { PARLAY_LEG_COUNT } from "@/lib/scoring";
 import { BootLoader } from "@/components/boot-loader";
@@ -43,8 +45,21 @@ import {
   ParlayFlowStatus,
 } from "@/components/parlay-flow-status";
 import { DiscoveryInfoModal } from "@/components/discovery-info-modal";
-import { FiveForFive } from "@/components/five-for-five";
+import { WeekRecord } from "@/components/week-record";
+import { BottomNav, type AppTab } from "@/components/bottom-nav";
+import { ResultsView } from "@/components/results-view";
+import { DateStrip } from "@/components/date-strip";
+import { SlateGamesList } from "@/components/slate-games-list";
+import {
+  SlateBrowser,
+  type BrowseCandidate,
+} from "@/components/slate-browser";
+import { ParlaySheet } from "@/components/parlay-sheet";
+import { PlayerAvatar } from "@/components/player-avatar";
+import { RiskSheet } from "@/components/risk-sheet";
 import { formatDisplayDate, getTodayEastern } from "@/lib/dates";
+import { hasSlipForDate, pendingForDate } from "@/lib/pending";
+import { buildWeekRecord, upcomingSlateDates } from "@/lib/week-record";
 import { gameKey } from "@/lib/slate-games";
 import type { SettleLockReason } from "@/lib/settle-lock-ui";
 import { settleButtonLabel, settleLockHint } from "@/lib/settle-lock-ui";
@@ -88,6 +103,7 @@ type StatusResponse = ParlayState & {
   sliderMax?: number;
   slate?: SlateInfo;
   settleLock?: SettleLockInfo | null;
+  settleLocks?: Record<string, SettleLockInfo>;
 };
 
 type ProgressLine = {
@@ -107,12 +123,31 @@ export default function Home() {
   const [historyExpandedId, setHistoryExpandedId] = useState<string | null>(
     null
   );
-  const [showSlate, setShowSlate] = useState(false);
   const [deselectedGameKeys, setDeselectedGameKeys] = useState<Set<string>>(
     () => new Set()
   );
+  const [statsReady, setStatsReady] = useState(false);
+  const [slateLoading, setSlateLoading] = useState(false);
+  /** When true, auto-select top 5 into the sheet after discovery. */
+  const suggestTop5Ref = useRef(false);
+  const riskPreferenceRef = useRef<RiskPreference>("LOW");
+  const [riskPreference, setRiskPreference] = useState<RiskPreference | null>(
+    null
+  );
+  const [riskSheetOpen, setRiskSheetOpen] = useState(false);
+  /** Suggest 5 UX: sheet open with skeletons while discovery runs. */
+  const [suggesting, setSuggesting] = useState(false);
+  const createAbortRef = useRef<AbortController | null>(null);
+  /** Restore browse stats if Suggest 5 is cancelled mid-run. */
+  const suggestSnapshotRef = useRef<{
+    pool: BrowseCandidate[];
+    ready: boolean;
+    ranked: RankedPick[];
+  } | null>(null);
   const [h2hMode, setH2hMode] = useState(false);
   const [createOptsOpen, setCreateOptsOpen] = useState(false);
+  const [appTab, setAppTab] = useState<AppTab>("home");
+  const [stake, setStake] = useState<StakeTier>(2);
   const [discoveryInfoOpen, setDiscoveryInfoOpen] = useState(false);
   const [progressLines, setProgressLines] = useState<ProgressLine[]>([]);
   const [rankedPicks, setRankedPicks] = useState<RankedPick[]>([]);
@@ -129,20 +164,20 @@ export default function Home() {
   const [booting, setBooting] = useState(true);
   const [bootFading, setBootFading] = useState(false);
   const [loadProgress, setLoadProgress] = useState(0);
+  const [viewDate, setViewDate] = useState(() => getTodayEastern());
+  const [candidatePool, setCandidatePool] = useState<BrowseCandidate[]>([]);
   const progressEndRef = useRef<HTMLDivElement>(null);
+  const viewDateRef = useRef(viewDate);
+  viewDateRef.current = viewDate;
 
-  const settleLock = useMemo(() => {
-    const raw = state?.settleLock;
+  function hydrateSettleLock(raw: SettleLockInfo | null | undefined) {
     if (!raw) return null;
     const timeRemainingMs =
       raw.unlockAt != null
         ? Math.max(0, new Date(raw.unlockAt).getTime() - clockMs)
         : 0;
     const waitingPlayers =
-      raw.legsStats
-        ?.filter((l) => !l.ready)
-        .map((l) => l.player) ?? [];
-
+      raw.legsStats?.filter((l) => !l.ready).map((l) => l.player) ?? [];
     return {
       ...raw,
       remainingMs:
@@ -151,10 +186,28 @@ export default function Home() {
           : raw.remainingMs,
       waitingPlayers,
     };
-  }, [state?.settleLock, clockMs]);
+  }
+
+  const settleLock = useMemo(
+    () => hydrateSettleLock(state?.settleLock),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clockMs drives countdown
+    [state?.settleLock, clockMs]
+  );
+
+  const settleLocksByDate = useMemo(() => {
+    const map = state?.settleLocks ?? {};
+    const out: Record<string, NonNullable<ReturnType<typeof hydrateSettleLock>>> =
+      {};
+    for (const [date, raw] of Object.entries(map)) {
+      const hydrated = hydrateSettleLock(raw);
+      if (hydrated) out[date] = hydrated;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.settleLocks, clockMs]);
 
   useEffect(() => {
-    if (!state?.pending) return;
+    if (!state?.pending?.length) return;
     const tick = setInterval(() => setClockMs(Date.now()), 1000);
     return () => clearInterval(tick);
   }, [state?.pending]);
@@ -198,11 +251,94 @@ export default function Home() {
     };
   }, [selectedPicks, oddsByLeg]);
 
-  function toggleRankedPick(rank: number) {
-    setRankedPicks((prev) =>
-      toggleRankedSelection(prev, rank, PARLAY_LEG_COUNT)
-    );
+  const recommendedStake: StakeTier | null = riskPreference
+    ? stakeTierForRisk(riskPreference)
+    : draftMath?.valid
+      ? (draftMath.stake as StakeTier)
+      : null;
+
+  useEffect(() => {
+    if (recommendedStake != null) setStake(recommendedStake);
+  }, [recommendedStake]);
+
+  function toggleBrowseCandidate(c: BrowseCandidate) {
+    const key = legKey(c);
+    const ps = `${c.player}|${c.stat}`;
     setPlaceError(null);
+    setRankedPicks((prev) => {
+      const idx = prev.findIndex((p) => legKey(p) === key);
+      if (idx >= 0) {
+        const currentlyOn = prev[idx].selected;
+        if (currentlyOn) {
+          return prev.map((p, i) =>
+            i === idx ? { ...p, selected: false } : p
+          );
+        }
+        // Selecting this leg: drop any other threshold for same player+stat.
+        let next = prev.map((p) =>
+          `${p.player}|${p.stat}` === ps && legKey(p) !== key
+            ? { ...p, selected: false }
+            : p
+        );
+        const selectedCount = next.filter((p) => p.selected).length;
+        if (selectedCount >= PARLAY_LEG_COUNT) return prev;
+        return next.map((p, i) =>
+          i === idx ? { ...p, selected: true } : p
+        );
+      }
+      const withoutCategory = prev.map((p) =>
+        `${p.player}|${p.stat}` === ps ? { ...p, selected: false } : p
+      );
+      const selectedCount = withoutCategory.filter((p) => p.selected).length;
+      if (selectedCount >= PARLAY_LEG_COUNT) return prev;
+      const pick: RankedPick = {
+        player: c.player,
+        team: c.team,
+        stat: c.stat,
+        threshold: c.threshold,
+        score: c.score,
+        rank: withoutCategory.length + 1,
+        odds: c.odds,
+        last5: c.last5,
+        buffer: c.buffer,
+        espnAthleteId: c.espnAthleteId,
+        selected: true,
+      };
+      return [...withoutCategory, pick];
+    });
+  }
+
+  function restoreSuggestSnapshot() {
+    const snap = suggestSnapshotRef.current;
+    suggestSnapshotRef.current = null;
+    if (!snap) return false;
+    setCandidatePool(snap.pool);
+    setStatsReady(snap.ready || snap.pool.length > 0);
+    setRankedPicks(snap.ranked.map((p) => ({ ...p, selected: false })));
+    return true;
+  }
+
+  function discardDraft() {
+    createAbortRef.current?.abort();
+    createAbortRef.current = null;
+    setSuggesting(false);
+    setLoading(null);
+    setDraftMeta(null);
+    setOddsByLeg({});
+    setPlaceError(null);
+    setRiskPreference(null);
+    riskPreferenceRef.current = "LOW";
+    if (!restoreSuggestSnapshot()) {
+      setRankedPicks((prev) => prev.map((p) => ({ ...p, selected: false })));
+    }
+  }
+
+  function startSuggestWithRisk(risk: RiskPreference) {
+    setRiskSheetOpen(false);
+    setRiskPreference(risk);
+    riskPreferenceRef.current = risk;
+    setStake(stakeTierForRisk(risk));
+    void handleCreate({ suggestTop5: true });
   }
 
   function setOddsForLeg(key: string, value: string) {
@@ -210,36 +346,77 @@ export default function Home() {
     setPlaceError(null);
   }
 
-  const fetchStatus = useCallback(async (opts?: { silent?: boolean }) => {
-    const silent = opts?.silent ?? false;
-    let tick: ReturnType<typeof setInterval> | undefined;
-    if (!silent) {
-      tick = setInterval(() => {
-        setLoadProgress((p) => (p >= 88 ? p : p + 4));
-      }, 60);
-    }
-    try {
-      const res = await fetch("/api/status");
-      const data = await res.json();
-      setState(data);
+  const fetchStatus = useCallback(
+    async (opts?: { silent?: boolean; date?: string; fresh?: boolean }) => {
+      const silent = opts?.silent ?? false;
+      const date = opts?.date ?? viewDateRef.current;
+      const fresh = opts?.fresh ?? false;
+      let tick: ReturnType<typeof setInterval> | undefined;
       if (!silent) {
-        setLoadProgress(100);
-        setBootFading(true);
-        await new Promise((r) => setTimeout(r, 450));
-        setBooting(false);
-        setBootFading(false);
+        tick = setInterval(() => {
+          setLoadProgress((p) => (p >= 88 ? p : p + 4));
+        }, 60);
       }
-    } finally {
-      if (tick) clearInterval(tick);
-    }
-  }, []);
+      try {
+        const qs = new URLSearchParams({ date });
+        if (fresh) qs.set("fresh", "1");
+        const res = await fetch(`/api/status?${qs.toString()}`);
+        const data = await res.json();
+        setState(data);
+      } catch (err) {
+        console.error("status fetch failed", err);
+        if (!silent) {
+          setMessage("Couldn't load slate — check the connection and refresh.");
+        }
+      } finally {
+        if (tick) clearInterval(tick);
+        setSlateLoading(false);
+        if (!silent) {
+          setLoadProgress(100);
+          setBootFading(true);
+          await new Promise((r) => setTimeout(r, 220));
+          setBooting(false);
+          setBootFading(false);
+        }
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     void fetchStatus();
   }, [fetchStatus]);
 
+  async function handleViewDateChange(ymd: string) {
+    if (ymd === viewDate) return;
+    setViewDate(ymd);
+    setSlateLoading(true);
+    setCandidatePool([]);
+    setRankedPicks([]);
+    setDraftMeta(null);
+    setOddsByLeg({});
+    setPlaceError(null);
+    setDeselectedGameKeys(new Set());
+    setStatsReady(false);
+    // Clear stale games so we don't show yesterday's slate under today's label.
+    setState((prev) =>
+      prev?.slate
+        ? {
+            ...prev,
+            slate: {
+              ...prev.slate,
+              date: ymd,
+              games: [],
+              rosterCount: 0,
+            },
+          }
+        : prev
+    );
+    await fetchStatus({ date: ymd, silent: true, fresh: true });
+  }
+
   useEffect(() => {
-    if (!state?.pending) return;
+    if (!state?.pending?.length) return;
     const id = setInterval(() => {
       void fetchStatus({ silent: true });
     }, 8_000);
@@ -251,12 +428,6 @@ export default function Home() {
     [state?.history]
   );
 
-  const roi =
-    state != null
-      ? (((state.bankroll - 200) / 200) * 100).toFixed(1)
-      : "0.0";
-  const roiPositive = state != null && state.bankroll >= 200;
-
   const parlayRecord = useMemo(() => {
     if (!state?.history.length) return null;
     const wins = state.history.filter((h) => h.result === "win").length;
@@ -264,32 +435,46 @@ export default function Home() {
     return { wins, losses };
   }, [state?.history]);
 
+  const weekDays = useMemo(
+    () => buildWeekRecord(state?.history ?? [], getTodayEastern()),
+    [state?.history]
+  );
+
+  const slateDates = useMemo(() => upcomingSlateDates(getTodayEastern(), 8), []);
+
+  const selectedKeys = useMemo(
+    () => new Set(selectedPicks.map((p) => legKey(p))),
+    [selectedPicks]
+  );
+
+  const selectedPlayerStats = useMemo(
+    () => new Set(selectedPicks.map((p) => `${p.player}|${p.stat}`)),
+    [selectedPicks]
+  );
+
+  const sheetGameCount = useMemo(() => {
+    const teams = new Set(selectedPicks.map((p) => p.team.toUpperCase()));
+    if (!state?.slate?.games.length) return teams.size;
+    let count = 0;
+    for (const g of state.slate.games) {
+      if (
+        teams.has(g.home.toUpperCase()) ||
+        teams.has(g.away.toUpperCase())
+      ) {
+        count += 1;
+      }
+    }
+    return count || teams.size;
+  }, [selectedPicks, state?.slate?.games]);
+
   const includedGames = useMemo(() => {
     if (!state?.slate?.games.length) return [];
     return state.slate.games.filter((g) => !deselectedGameKeys.has(gameKey(g)));
   }, [state?.slate?.games, deselectedGameKeys]);
 
-  const slateGamesLocked = !!loading || !!state?.pending || !!draftMeta;
-
   useEffect(() => {
     setDeselectedGameKeys(new Set());
   }, [state?.slate?.date]);
-
-  function toggleSlateGame(away: string, home: string) {
-    if (slateGamesLocked || !state?.slate) return;
-    const key = gameKey({ away, home });
-    const selectedCount = state.slate.games.length - deselectedGameKeys.size;
-    if (deselectedGameKeys.has(key)) {
-      setDeselectedGameKeys((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-      return;
-    }
-    if (selectedCount <= 1) return;
-    setDeselectedGameKeys((prev) => new Set(prev).add(key));
-  }
 
   function pushProgress(text: string, kind: ProgressLine["kind"] = "info") {
     progressId += 1;
@@ -317,6 +502,25 @@ export default function Home() {
         break;
       case "player_result": {
         if (event.status === "qualified" && event.milestones?.length) {
+          setCandidatePool((prev) => {
+            const next = [...prev];
+            for (const m of event.milestones!) {
+              const row: BrowseCandidate = {
+                player: event.player,
+                team: event.team,
+                stat: m.stat,
+                threshold: m.threshold,
+                last5: m.last5,
+                score: m.score,
+                odds: m.odds,
+                buffer: m.buffer,
+                espnAthleteId: event.espnAthleteId,
+              };
+              const key = legKey(row);
+              if (!next.some((c) => legKey(c) === key)) next.push(row);
+            }
+            return next;
+          });
           for (const m of event.milestones) {
             const label = formatMilestoneLabel(m.stat, m.threshold);
             const h2h =
@@ -341,6 +545,7 @@ export default function Home() {
         break;
       }
       case "discovery_done":
+        if (event.qualified > 0) setStatsReady(true);
         pushProgress(
           `Discovery done: ${event.qualified} qualify · ${event.withFiveGames} with 5 games · ${event.evaluated} scanned`,
           "phase"
@@ -353,12 +558,14 @@ export default function Home() {
         );
         break;
       case "build_ranked": {
+        const pickTop = suggestTop5Ref.current;
         const ranked = defaultSelectedRanked(
           event.ranked.map((r) => ({
             ...r,
-            selected: r.selected ?? r.picked ?? r.rank <= event.parlayLegCount,
+            selected: false,
           })),
-          event.parlayLegCount
+          pickTop ? event.parlayLegCount : 0,
+          riskPreferenceRef.current
         );
         setRankedPicks(ranked);
         pushProgress(
@@ -395,6 +602,7 @@ export default function Home() {
         );
         break;
       case "complete":
+        setStatsReady(true);
         if (event.draft) {
           setDraftMeta({
             date: event.draft.date,
@@ -414,35 +622,70 @@ export default function Home() {
     }
   }
 
-  async function handleCreate() {
+  function toggleH2hAndRetrieve() {
+    const next = !h2hMode;
+    setH2hMode(next);
+    setCreateOptsOpen(false);
+    void handleCreate({ suggestTop5: false, h2hMode: next });
+  }
+
+  async function handleCreate(opts?: {
+    suggestTop5?: boolean;
+    h2hMode?: boolean;
+  }) {
+    const suggestTop5 = opts?.suggestTop5 ?? true;
+    const h2h = opts?.h2hMode ?? h2hMode;
+    suggestTop5Ref.current = suggestTop5;
+    createAbortRef.current?.abort();
+    const ac = new AbortController();
+    createAbortRef.current = ac;
     setCreateOptsOpen(false);
     setLoading("create");
     setMessage(null);
     setProgressLines([]);
-    setRankedPicks([]);
     setDraftMeta(null);
     setOddsByLeg({});
     setPlaceError(null);
     setScanProgress({ index: 0, total: 0 });
-    setShowScanReport(true);
-    setShowDiscoveryLog(true);
-    pushProgress("Starting create parlay…", "phase");
+    setShowScanReport(false);
+    setShowDiscoveryLog(false);
+
+    if (suggestTop5) {
+      suggestSnapshotRef.current = {
+        pool: candidatePool,
+        ready: statsReady,
+        ranked: rankedPicks,
+      };
+      setSuggesting(true);
+      // Keep retrieved browse stats visible; only clear leg selections.
+      setRankedPicks((prev) => prev.map((p) => ({ ...p, selected: false })));
+    } else {
+      suggestSnapshotRef.current = null;
+      setRankedPicks([]);
+      setCandidatePool([]);
+      setStatsReady(false);
+    }
+
+    pushProgress("Scanning slate for qualifying legs…", "phase");
 
     try {
       const res = await fetch("/api/parlay/create/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: ac.signal,
         body: JSON.stringify({
+          date: viewDate,
           includedGames: includedGames.map((g) => ({
             away: g.away,
             home: g.home,
           })),
-          h2hMode,
+          h2hMode: h2h,
         }),
       });
 
       if (!res.ok || !res.body) {
         setMessage("Create failed — bad response from server.");
+        if (suggestTop5) restoreSuggestSnapshot();
         return;
       }
 
@@ -451,6 +694,7 @@ export default function Home() {
       let buffer = "";
 
       while (true) {
+        if (ac.signal.aborted) break;
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -470,15 +714,26 @@ export default function Home() {
         }
       }
 
-      await fetchStatus();
+      if (!ac.signal.aborted) {
+        suggestSnapshotRef.current = null;
+        await fetchStatus();
+      }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        restoreSuggestSnapshot();
+        return;
+      }
       setMessage(
         err instanceof Error
           ? `Create failed: ${err.message}`
           : "Create failed. Check the terminal for errors."
       );
+      if (suggestTop5) restoreSuggestSnapshot();
     } finally {
+      if (createAbortRef.current === ac) createAbortRef.current = null;
       setLoading(null);
+      setSuggesting(false);
+      if (ac.signal.aborted) restoreSuggestSnapshot();
     }
   }
 
@@ -520,7 +775,12 @@ export default function Home() {
       const res = await fetch("/api/parlay/place", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: draftMeta.date, legs, rankedPool }),
+        body: JSON.stringify({
+          date: draftMeta.date,
+          legs,
+          rankedPool,
+          stake,
+        }),
       });
       const data = await res.json();
       if (data.error || !data.ok) {
@@ -542,7 +802,7 @@ export default function Home() {
   async function handleRevertSettle() {
     if (
       !confirm(
-        "Revert the last settled parlay? It will return to pending, bankroll will be restored, and settle will stay locked until tomorrow morning (2:30 AM ET)."
+        "Revert the last settled parlay? It will return to pending, net will be restored, and settle will stay locked until tomorrow morning (2:30 AM ET)."
       )
     ) {
       return;
@@ -560,10 +820,10 @@ export default function Home() {
     }
   }
 
-  async function handleCancelPending() {
+  async function handleCancelPending(date: string) {
     if (
       !confirm(
-        "Cancel this pending parlay? Your stake will be returned to your bankroll."
+        "Cancel this pending parlay? The open stake will be cleared from your net."
       )
     ) {
       return;
@@ -571,7 +831,11 @@ export default function Home() {
     setLoading("cancel");
     setMessage(null);
     try {
-      const res = await fetch("/api/parlay/cancel", { method: "POST" });
+      const res = await fetch("/api/parlay/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date }),
+      });
       const data = await res.json();
       if (data.message) setMessage(data.message);
       if (data.error) setMessage(data.error ?? data.message);
@@ -584,11 +848,15 @@ export default function Home() {
     }
   }
 
-  async function handleSettle() {
+  async function handleSettle(date: string) {
     setLoading("settle");
     setMessage(null);
     try {
-      const res = await fetch("/api/parlay/settle", { method: "POST" });
+      const res = await fetch("/api/parlay/settle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date }),
+      });
       const data = await res.json();
       if (data.message) setMessage(data.message);
       if (data.error) setMessage(data.error);
@@ -599,11 +867,15 @@ export default function Home() {
   }
 
   async function handleReset() {
-    if (!confirm("Reset bankroll to $200 and clear history?")) return;
+    if (!confirm("Clear all history and reset tracker state?")) return;
     await fetch("/api/reset", { method: "POST" });
     setMessage(null);
     setHistoryOpen(false);
     setHistoryVisibleCount(3);
+    setStatsReady(false);
+    setCandidatePool([]);
+    setRankedPicks([]);
+    setDraftMeta(null);
     await fetchStatus();
   }
 
@@ -671,7 +943,44 @@ export default function Home() {
     }
   }
 
-  const today = formatDisplayDate(getTodayEastern());
+  const viewPending = useMemo(
+    () => (state ? pendingForDate(state, viewDate) : null),
+    [state, viewDate]
+  );
+  const viewHasSlip = useMemo(
+    () => (state ? hasSlipForDate(state, viewDate) : false),
+    [state, viewDate]
+  );
+  useEffect(() => {
+    if (viewPending) return;
+    if (selectedCount > 0) {
+      setDraftMeta((m) => m ?? { date: viewDate, confidence: "MEDIUM" });
+    } else {
+      setDraftMeta(null);
+    }
+  }, [selectedCount, viewPending, viewDate]);
+
+  const browsePool = useMemo(() => {
+    if (candidatePool.length > 0) return candidatePool;
+    return rankedPicks.map((p) => ({
+      player: p.player,
+      team: p.team,
+      stat: p.stat,
+      threshold: p.threshold,
+      last5: p.last5,
+      score: p.score,
+      odds: p.odds,
+      buffer: p.buffer,
+      espnAthleteId: p.espnAthleteId,
+    }));
+  }, [candidatePool, rankedPicks]);
+
+  const showBrowser =
+    statsReady &&
+    browsePool.length > 0 &&
+    !viewPending &&
+    !viewHasSlip &&
+    loading !== "place";
 
   return (
     <>
@@ -679,440 +988,225 @@ export default function Home() {
         <BootLoader progress={loadProgress} fadingOut={bootFading} />
       )}
     <main
-      className={`mx-auto max-w-md px-4 pb-10 pt-6 transition-opacity duration-500 ${
-        booting ? "opacity-0" : "opacity-100"
-      }`}
+      className={`mx-auto max-w-md px-4 pt-6 transition-opacity duration-500 ${
+        appTab === "home" &&
+        (selectedCount > 0 || suggesting) &&
+        !viewPending
+          ? "pb-44"
+          : "pb-28"
+      } ${booting ? "opacity-0" : "opacity-100"}`}
     >
-      <header className="mb-6 flex items-center justify-between text-sm text-[var(--text-muted)]">
+      <header className="mb-5">
         <h1 className="text-lg font-semibold tracking-tight text-[var(--text)]">
-          5For5
+          {appTab === "home" ? "5For5" : "Results"}
         </h1>
-        <span className="text-[var(--text-subtle)]">{today}</span>
       </header>
 
-      <section className="mb-4 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)] transition-[padding] duration-300">
-        <div className="p-6 text-center">
-          <p className="text-4xl font-semibold text-[var(--text)]">
-            ${state?.bankroll.toFixed(2) ?? "—"}
-          </p>
-          {parlayRecord && (
-            <p className="mt-2 text-sm text-[var(--text-muted)]">
-              {parlayRecord.wins}–{parlayRecord.losses} W–L
-              {parlayRecord.losses > 0 && (
-                <span className="text-[var(--text-subtle)]">
-                  {" "}
-                  (
-                  {(parlayRecord.wins / parlayRecord.losses).toFixed(1)}
-                  :1)
-                </span>
-              )}
-            </p>
-          )}
-          <p
-            className={`mt-1 text-sm ${roiPositive ? "text-green-400" : "text-red-400"}`}
-          >
-            {roiPositive ? "+" : ""}
-            {roi}% ROI · started $200
-          </p>
-          {historyNewestFirst.length > 0 && (
+      {appTab === "results" && (
+        <ResultsView
+          net={state?.bankroll ?? 0}
+          history={historyNewestFirst}
+          pending={state?.pending ?? []}
+          pendingSection={
+            <div className="space-y-3">
+              {(state?.pending ?? []).map((p) => {
+                const lock = settleLocksByDate[p.date] ?? null;
+                return (
+                  <div
+                    key={`${p.date}-${p.stake}-${p.parlayOdds}`}
+                    className="parlay-pending-frame"
+                  >
+                    <section
+                      className={`parlay-pending-inner p-4 transition-opacity duration-300 ${
+                        loading === "settle"
+                          ? "pointer-events-none opacity-55"
+                          : ""
+                      }`}
+                    >
+                      {lock && (
+                        <p className="mb-3 text-xs leading-relaxed text-[var(--text-subtle)]">
+                          {settleLockHint(lock)}
+                        </p>
+                      )}
+                      <PendingCard parlay={p} />
+                      <div className="mt-4 space-y-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSettle(p.date)}
+                          disabled={!!loading || lock?.locked !== false}
+                          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-black px-3 py-3 text-sm font-semibold text-white disabled:opacity-40"
+                        >
+                          {loading === "settle" && <ParlayButtonSpinner />}
+                          {loading === "settle"
+                            ? "Settling…"
+                            : lock
+                              ? settleButtonLabel(lock)
+                              : "Settle"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelPending(p.date)}
+                          disabled={!!loading}
+                          className="flex min-h-12 w-full items-center justify-center rounded-full border border-red-200 bg-white text-sm font-semibold text-red-600 disabled:opacity-40"
+                        >
+                          {loading === "cancel" ? "Cancelling…" : "Cancel"}
+                        </button>
+                      </div>
+                    </section>
+                  </div>
+                );
+              })}
+            </div>
+          }
+        >
+          <ul className="space-y-2">
+            {historyNewestFirst
+              .slice(0, historyVisibleCount)
+              .map((h, displayIndex) => {
+                const historyIndex =
+                  (state?.history.length ?? 0) - 1 - displayIndex;
+                const cardId = `${h.date}-${historyIndex}`;
+                return (
+                  <HistoryCard
+                    key={cardId}
+                    parlay={h}
+                    expanded={historyExpandedId === cardId}
+                    onToggle={() =>
+                      setHistoryExpandedId((id) =>
+                        id === cardId ? null : cardId
+                      )
+                    }
+                    onDelete={() => handleDeleteHistory(historyIndex)}
+                    deleteDisabled={!!loading}
+                    onBackfillRanked={() =>
+                      handleBackfillHistoryRanked(historyIndex)
+                    }
+                    backfillDisabled={!!loading}
+                    onRevert={
+                      !(state?.pending ?? []).some((p) => p.date === h.date) &&
+                      historyIndex === (state?.history.length ?? 0) - 1
+                        ? handleRevertSettle
+                        : undefined
+                    }
+                    revertDisabled={loading === "revert"}
+                  />
+                );
+              })}
+          </ul>
+          {historyVisibleCount < historyNewestFirst.length && (
             <button
               type="button"
-              onClick={toggleHistoryPanel}
-              className="mt-4 text-sm font-medium text-[var(--text-muted)] underline-offset-2 hover:text-[var(--text)] hover:underline"
+              onClick={() =>
+                setHistoryVisibleCount((n) =>
+                  Math.min(n + 3, historyNewestFirst.length)
+                )
+              }
+              className="mt-3 w-full py-2 text-xs text-[var(--text-muted)] underline-offset-2 hover:text-[var(--text)] hover:underline"
             >
-              {historyOpen ? "Hide History" : "View History"}
+              Show more (
+              {historyNewestFirst.length - historyVisibleCount} remaining)
             </button>
           )}
-        </div>
+        </ResultsView>
+      )}
 
-        {historyOpen && historyNewestFirst.length > 0 && (
-          <div className="border-t border-[var(--border)] px-4 pb-4 pt-3">
-            <ul className="space-y-2">
-              {historyNewestFirst
-                .slice(0, historyVisibleCount)
-                .map((h, displayIndex) => {
-                  const historyIndex =
-                    (state?.history.length ?? 0) - 1 - displayIndex;
-                  const cardId = `${h.date}-${historyIndex}`;
-                  return (
-                    <HistoryCard
-                      key={cardId}
-                      parlay={h}
-                      expanded={historyExpandedId === cardId}
-                      onToggle={() =>
-                        setHistoryExpandedId((id) =>
-                          id === cardId ? null : cardId
-                        )
-                      }
-                      onDelete={() => handleDeleteHistory(historyIndex)}
-                      deleteDisabled={!!loading}
-                      onBackfillRanked={() =>
-                        handleBackfillHistoryRanked(historyIndex)
-                      }
-                      backfillDisabled={!!loading}
-                      onRevert={
-                        !state?.pending &&
-                        historyIndex === (state?.history.length ?? 0) - 1
-                          ? handleRevertSettle
-                          : undefined
-                      }
-                      revertDisabled={loading === "revert"}
-                    />
-                  );
-                })}
-            </ul>
-            {historyVisibleCount < historyNewestFirst.length && (
+      {appTab === "home" && (
+        <>
+      <WeekRecord
+        days={weekDays}
+        lifetime={parlayRecord}
+        onOpenHistory={
+          historyNewestFirst.length > 0
+            ? () => {
+                setAppTab("results");
+                setHistoryOpen(true);
+                setHistoryVisibleCount(Math.max(historyVisibleCount, 5));
+              }
+            : undefined
+        }
+        historyOpen={false}
+      />
+
+      <DateStrip
+        dates={slateDates}
+        selected={viewDate}
+        onSelect={(ymd) => void handleViewDateChange(ymd)}
+        disabled={!!loading || slateLoading}
+      />
+
+      <SlateGamesList
+        games={state?.slate?.date === viewDate ? state.slate.games : []}
+        loading={slateLoading || (booting && !state?.slate)}
+      />
+
+      {!viewPending && !viewHasSlip && !showBrowser && (
+        <div className="relative mb-3 flex gap-2">
+          {createOptsOpen && (
+            <>
               <button
                 type="button"
-                onClick={() =>
-                  setHistoryVisibleCount((n) =>
-                    Math.min(n + 3, historyNewestFirst.length)
-                  )
-                }
-                className="mt-3 w-full py-2 text-xs text-[var(--text-muted)] underline-offset-2 hover:text-[var(--text)] hover:underline"
+                className="fixed inset-0 z-40 cursor-default"
+                aria-label="Close options"
+                onClick={() => setCreateOptsOpen(false)}
+              />
+              <div
+                className="opts-menu-panel absolute bottom-full right-0 z-50 mb-2 w-56 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-2 shadow-lg ring-1 ring-black/10"
+                role="dialog"
+                aria-label="Discovery options"
               >
-                Show more (
-                {historyNewestFirst.length - historyVisibleCount} remaining)
-              </button>
-            )}
-          </div>
-        )}
-      </section>
-
-      {state?.slate && (
-        <CollapsiblePanel
-          title={`Tonight · ${formatDisplayDate(state.slate.date)}`}
-          subtitle={`${includedGames.length} of ${state.slate.games.length} games in pool`}
-          open={showSlate}
-          onToggle={() => setShowSlate((v) => !v)}
-          className="mb-4"
-        >
-          <div className="text-sm">
-            {state.slate.games.length === 0 ? (
-              <p className="text-[var(--text-muted)]">No games scheduled today.</p>
-            ) : (
-              <ul className="space-y-1">
-                {state.slate.games.map((g) => {
-                  const selected = !deselectedGameKeys.has(gameKey(g));
-                  return (
-                    <li key={`${g.away}-${g.home}`}>
-                      <button
-                        type="button"
-                        onClick={() => toggleSlateGame(g.away, g.home)}
-                        disabled={slateGamesLocked}
-                        aria-pressed={selected}
-                        className={`flex w-full items-center justify-between rounded-lg px-2 py-2 text-left transition-colors disabled:opacity-50 ${
-                          selected
-                            ? "bg-green-950/40 text-[var(--text)] ring-1 ring-green-800/50"
-                            : "bg-[var(--bg-inset)] text-[var(--text-muted)] line-through opacity-60"
-                        }`}
-                      >
-                        <span>
-                          {g.away} @ {g.home}
-                        </span>
-                        <span className="ml-2 shrink-0 text-xs text-[var(--text-subtle)]">
-                          {g.status}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            <p className="mt-2 text-xs text-[var(--text-subtle)]">
-              Tap a game to exclude it from Create Parlay
-              {state.qualifiedCount != null
-                ? ` · ${state.qualifiedCount} qualifying (last run)`
-                : ""}
-            </p>
-          </div>
-        </CollapsiblePanel>
-      )}
-
-      {rankedPicks.length > 0 && !state?.pending && (
-        <RankedPicksPanel
-          picks={rankedPicks}
-          legCount={PARLAY_LEG_COUNT}
-          selectedCount={selectedCount}
-          onToggle={toggleRankedPick}
-        />
-      )}
-
-      {draftMeta && !state?.pending && (
-        <section className="mb-4 rounded-xl border border-green-800/50 bg-[var(--bg-card)] p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-xs font-medium uppercase tracking-wide text-green-500">
-              Ready to place · {formatDisplayDate(draftMeta.date)}
-            </p>
-            <span className="text-xs text-[var(--text-muted)]">
-              {selectedCount}/{PARLAY_LEG_COUNT} legs · {draftMeta.confidence}
-            </span>
-          </div>
-          <ul className="space-y-3">
-            {selectedPicks.map((pick) => {
-              const key = legKey(pick);
-              const leg = rankedToLeg(pick);
-              const entered = parseAmericanOdds(oddsByLeg[key] ?? "");
-              const heavyFavorite =
-                entered !== null && !passesOddsCap(entered);
-              return (
-                <li
-                  key={key}
-                  className={`rounded-lg border bg-[var(--bg-inset)] p-3 ${
-                    heavyFavorite ? "border-amber-800/50" : "border-[var(--border-strong)]"
-                  }`}
+                <p className="px-2 pb-1 pt-1 text-[10px] font-medium uppercase tracking-wide text-[var(--text-subtle)]">
+                  Discovery
+                </p>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={h2hMode}
+                  onClick={toggleH2hAndRetrieve}
+                  className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg px-2 active:bg-[var(--bg-inset)]"
                 >
-                  <p className="text-sm text-[var(--text)]">
-                    {leg.player}{" "}
-                    <span className="text-[var(--text-muted)]">
-                      {formatMilestoneLabel(leg.stat, leg.threshold)}
-                    </span>
-                  </p>
-                  <FiveForFive values={leg.last5} />
-                  <div
-                    className={`mt-3 border-b pb-1 transition-colors ${
-                      heavyFavorite
-                        ? "border-amber-700/50 focus-within:border-amber-500"
-                        : "border-[var(--border-strong)] focus-within:border-green-600"
+                  <span className="text-left text-sm text-[var(--text)]">H2H</span>
+                  <span
+                    className={`relative inline-flex h-7 w-12 shrink-0 rounded-full transition-colors ${
+                      h2hMode ? "bg-green-600" : "bg-[var(--border-strong)]"
                     }`}
                   >
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-faint)]">
-                      FanDuel odds
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="text"
-                      value={oddsByLeg[key] ?? ""}
-                      onChange={(e) => setOddsForLeg(key, e.target.value)}
-                      placeholder="−280"
-                      className="w-full bg-transparent py-1 font-mono text-lg text-[var(--text)] placeholder:text-[var(--text-faint)] focus:outline-none"
-                      disabled={!!loading}
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                        h2hMode ? "translate-x-5" : "translate-x-0"
+                      }`}
                     />
-                  </div>
-                  {heavyFavorite && (
-                    <p className="mt-1.5 text-[10px] text-amber-400/90">
-                      Heavier than -1200 — fine to play, but consider swapping
-                      for a better parlay price.
-                    </p>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-          <div className="mt-4 space-y-2 rounded-lg border border-[var(--border-strong)] bg-[var(--bg-inset)] p-3 text-sm">
-            <div className="flex justify-between text-[var(--text-muted)]">
-              <span>Stake (auto)</span>
-              <span className="font-semibold text-[var(--text)]">
-                {draftMath?.valid ? `$${draftMath.stake}` : "—"}
-              </span>
-            </div>
-            {draftMath?.valid && (
-              <p className="text-xs text-[var(--text-subtle)]">{draftMath.tierLabel}</p>
-            )}
-            <div className="flex justify-between text-[var(--text-muted)]">
-              <span>Parlay odds</span>
-              <span className="font-mono text-[var(--text)]">
-                {draftMath?.valid ? formatAmerican(draftMath.parlayOdds) : "—"}
-              </span>
-            </div>
-            <div className="flex justify-between text-[var(--text-muted)]">
-              <span>To win</span>
-              <span className="font-semibold text-green-400">
-                {draftMath?.valid ? `$${draftMath.payout.toFixed(2)}` : "—"}
-              </span>
-            </div>
-            {draftMath?.valid && draftMath.hasJuiceLeg && (
-              <p className="text-xs text-amber-400/90">
-                One or more legs are heavier than -1200. You can still place;
-                swapping may improve combined odds.
-              </p>
-            )}
-          </div>
-          {placeError && (
-            <p className="mt-2 text-xs text-red-400">{placeError}</p>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDiscoveryInfoOpen(true)}
+                  className="mt-0.5 flex min-h-11 w-full items-center rounded-lg px-2 text-left text-sm text-[var(--text-muted)] active:bg-[var(--bg-inset)] hover:text-[var(--text)]"
+                >
+                  More information
+                </button>
+              </div>
+            </>
           )}
           <button
             type="button"
-            onClick={handlePlace}
-            disabled={
-              !!loading ||
-              selectedCount !== PARLAY_LEG_COUNT ||
-              !draftMath?.valid
-            }
-            className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-green-700 px-4 py-3 text-sm font-semibold text-[var(--text)] disabled:opacity-40"
-          >
-            {loading === "place" && <ParlayButtonSpinner />}
-            {loading === "place" ? "Placing…" : "Place Parlay"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setDraftMeta(null);
-              setRankedPicks([]);
-              setOddsByLeg({});
-              setPlaceError(null);
-            }}
-            className="mt-2 w-full py-2 text-xs text-[var(--text-faint)] underline"
+            onClick={() => void handleCreate({ suggestTop5: false })}
             disabled={!!loading}
+            className="flex min-h-12 flex-1 items-center justify-center rounded-full bg-black px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
           >
-            Discard draft
-          </button>
-        </section>
-      )}
-
-      <ParlayFlowStatus phase={loading === "settle" ? "settle" : null} />
-
-      {state?.pending && (
-        <div
-          key={`${state.pending.date}-${state.pending.stake}-${state.pending.parlayOdds}`}
-          className="parlay-pending-frame mb-4"
-        >
-          <section
-            className={`parlay-pending-inner parlay-pending-inner-enter p-4 transition-opacity duration-300 ${
-              loading === "settle" ? "pointer-events-none opacity-55" : ""
-            }`}
-          >
-            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-yellow-500">
-              Pending — {formatDisplayDate(state.pending.date)}
-            </p>
-            <p className="mb-3 text-xs leading-relaxed text-[var(--text-subtle)]">
-              {settleLock ? settleLockHint(settleLock) : ""}
-            </p>
-            {settleLock?.legsStats && settleLock.legsStats.length > 0 && (
-              <ul className="mb-3 space-y-1 text-[11px] text-[var(--text-muted)]">
-                {settleLock.legsStats.map((leg) => (
-                  <li
-                    key={`${leg.player}-${leg.stat}`}
-                    className="flex justify-between gap-2"
-                  >
-                    <span>
-                      {leg.player}{" "}
-                      <span className="text-[var(--text-subtle)]">
-                        {formatMilestoneLabel(leg.stat, leg.threshold)}
-                      </span>
-                    </span>
-                    <span
-                      className={
-                        leg.ready
-                          ? leg.hit
-                            ? "text-green-400"
-                            : "text-red-400"
-                          : "text-amber-400/90"
-                      }
-                    >
-                      {leg.ready && leg.actualValue != null
-                        ? `got ${leg.actualValue} · ${leg.source ?? "?"}`
-                        : leg.error === "player_not_found"
-                          ? "not found in feed"
-                          : "waiting for tonight's box score"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <PendingCard parlay={state.pending} />
-            <button
-              type="button"
-              onClick={handleCancelPending}
-              disabled={!!loading}
-              className="mt-3 w-full rounded-lg border border-red-900/60 bg-red-950/40 py-2.5 text-sm font-medium text-red-200 transition-colors hover:bg-red-950/70 disabled:opacity-40"
-            >
-              {loading === "cancel" ? "Cancelling…" : "Cancel pending parlay"}
-            </button>
-          </section>
-        </div>
-      )}
-
-      <ParlayFlowStatus phase={loading === "place" ? "place" : null} />
-
-      <div className="relative">
-        {createOptsOpen && (
-          <button
-            type="button"
-            className="fixed inset-0 z-40 cursor-default"
-            aria-label="Close options"
-            onClick={() => setCreateOptsOpen(false)}
-          />
-        )}
-        {createOptsOpen && (
-          <div
-            className="opts-menu-panel absolute bottom-full right-0 z-50 mb-2 w-56 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-2 shadow-lg ring-1 ring-black/20"
-            role="dialog"
-            aria-label="Create options"
-          >
-            <p className="px-2 pb-1 pt-1 text-[10px] font-medium uppercase tracking-wide text-[var(--text-subtle)]">
-              Discovery
-            </p>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={h2hMode}
-              onClick={() => setH2hMode((v) => !v)}
-              className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg px-2 active:bg-[var(--bg-inset)]"
-            >
-              <span className="text-left text-sm text-[var(--text)]">
-                H2H playoff mode
-              </span>
-              <span
-                className={`relative inline-flex h-7 w-12 shrink-0 rounded-full transition-colors ${
-                  h2hMode ? "bg-green-600" : "bg-[var(--border-strong)]"
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
-                    h2hMode ? "translate-x-5" : "translate-x-0"
-                  }`}
-                />
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setDiscoveryInfoOpen(true)}
-              className="mt-0.5 flex min-h-11 w-full items-center rounded-lg px-2 text-left text-sm text-[var(--text-muted)] active:bg-[var(--bg-inset)] hover:text-[var(--text)]"
-            >
-              More information
-            </button>
-          </div>
-        )}
-
-        <div className="grid grid-cols-[1fr_1fr_3rem] gap-2">
-          <button
-            type="button"
-            onClick={handleCreate}
-          disabled={!!loading || !!state?.pending || !!draftMeta}
-          className="min-h-12 rounded-xl bg-green-700 px-3 py-3 text-sm font-semibold text-[var(--text)] disabled:opacity-40"
-        >
-          {loading === "create"
-            ? scanProgress.total > 0
-              ? `Scanning ${scanProgress.index}/${scanProgress.total}…`
-              : "Building…"
-            : state?.pending
-              ? "Parlay pending"
-              : draftMeta
-                ? "Draft ready"
-                : "Create Parlay"}
-          </button>
-          <button
-            type="button"
-            onClick={handleSettle}
-            disabled={!!loading || !state?.pending}
-            className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[var(--bg-elevated)] px-3 py-3 text-sm font-semibold text-[var(--text)] ring-1 ring-[var(--border-strong)] disabled:opacity-40"
-          >
-            {loading === "settle" && <ParlayButtonSpinner />}
-            {loading === "settle"
-              ? "Settling…"
-              : settleLock
-                ? settleButtonLabel(settleLock)
-                : "Settle"}
+            {loading === "create"
+              ? scanProgress.total > 0
+                ? `Scanning ${scanProgress.index}/${scanProgress.total}…`
+                : "Retrieving…"
+              : "Retrieve stats"}
           </button>
           <button
             type="button"
             onClick={() => setCreateOptsOpen((o) => !o)}
-            disabled={!!loading || !!state?.pending || !!draftMeta}
+            disabled={!!loading}
             aria-expanded={createOptsOpen}
-            aria-label="Create parlay options"
-            className={`relative flex min-h-12 min-w-12 items-center justify-center rounded-xl bg-[var(--bg-elevated)] text-[var(--text-muted)] ring-1 ring-[var(--border-strong)] transition-colors disabled:opacity-40 active:bg-[var(--bg-inset)] ${
-              createOptsOpen ? "text-[var(--text)] ring-green-700/50" : ""
+            aria-label="Discovery options"
+            className={`relative flex min-h-12 min-w-12 items-center justify-center rounded-full bg-black text-white disabled:opacity-40 ${
+              createOptsOpen ? "ring-2 ring-black/30" : ""
             }`}
           >
             <svg
@@ -1127,11 +1221,202 @@ export default function Home() {
               <circle cx="12" cy="19" r="1.75" />
             </svg>
             {h2hMode && (
-              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-green-500 ring-2 ring-[var(--bg-elevated)]" />
+              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-green-400 ring-2 ring-black" />
             )}
           </button>
         </div>
-      </div>
+      )}
+
+      {showBrowser && (
+        <SlateBrowser
+          games={state?.slate?.games ?? []}
+          candidates={browsePool}
+          selectedKeys={selectedKeys}
+          selectedPlayerStats={selectedPlayerStats}
+          maxLegs={PARLAY_LEG_COUNT}
+          onToggle={toggleBrowseCandidate}
+          disabled={!!loading}
+          scanning={loading === "create"}
+        />
+      )}
+
+      {showBrowser && (
+        <div className="relative mb-3 space-y-2">
+          {createOptsOpen && (
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-40 cursor-default"
+                aria-label="Close options"
+                onClick={() => setCreateOptsOpen(false)}
+              />
+              <div
+                className="opts-menu-panel absolute bottom-full right-0 z-50 mb-2 w-56 rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-2 shadow-lg ring-1 ring-black/10"
+                role="dialog"
+                aria-label="Discovery options"
+              >
+                <p className="px-2 pb-1 pt-1 text-[10px] font-medium uppercase tracking-wide text-[var(--text-subtle)]">
+                  Discovery
+                </p>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={h2hMode}
+                  onClick={toggleH2hAndRetrieve}
+                  className="flex min-h-11 w-full items-center justify-between gap-3 rounded-lg px-2 active:bg-[var(--bg-inset)]"
+                >
+                  <span className="text-left text-sm text-[var(--text)]">H2H</span>
+                  <span
+                    className={`relative inline-flex h-7 w-12 shrink-0 rounded-full transition-colors ${
+                      h2hMode ? "bg-green-600" : "bg-[var(--border-strong)]"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                        h2hMode ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDiscoveryInfoOpen(true)}
+                  className="mt-0.5 flex min-h-11 w-full items-center rounded-lg px-2 text-left text-sm text-[var(--text-muted)] active:bg-[var(--bg-inset)] hover:text-[var(--text)]"
+                >
+                  More information
+                </button>
+              </div>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setRiskSheetOpen(true)}
+            disabled={!!loading}
+            className="flex min-h-12 w-full items-center justify-center rounded-full bg-black px-5 py-3 text-sm font-semibold text-white disabled:opacity-40"
+          >
+            {suggesting
+              ? "Generating…"
+              : loading === "create"
+                ? scanProgress.total > 0
+                  ? `Scanning ${scanProgress.index}/${scanProgress.total}…`
+                  : "Building…"
+                : "Suggest 5"}
+          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void handleCreate({ suggestTop5: false })}
+              disabled={!!loading}
+              className="flex min-h-12 flex-1 items-center justify-center rounded-full border border-[var(--border-strong)] bg-white px-5 py-3 text-sm font-semibold text-[var(--text)] disabled:opacity-40"
+            >
+              {loading === "create" && !suggesting
+                ? scanProgress.total > 0
+                  ? `Scanning ${scanProgress.index}/${scanProgress.total}…`
+                  : "Retrieving…"
+                : "Retrieve stats"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreateOptsOpen((o) => !o)}
+              disabled={!!loading}
+              aria-expanded={createOptsOpen}
+              aria-label="Discovery options"
+              className={`relative flex min-h-12 min-w-12 items-center justify-center rounded-full border border-[var(--border-strong)] bg-white text-[var(--text)] disabled:opacity-40 ${
+                createOptsOpen ? "ring-2 ring-black/20" : ""
+              }`}
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden
+              >
+                <circle cx="12" cy="5" r="1.75" />
+                <circle cx="12" cy="12" r="1.75" />
+                <circle cx="12" cy="19" r="1.75" />
+              </svg>
+              {h2hMode && (
+                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-green-400 ring-2 ring-white" />
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!viewPending && !viewHasSlip && (suggesting || selectedCount > 0) && (
+        <ParlaySheet
+          picks={selectedPicks}
+          maxLegs={PARLAY_LEG_COUNT}
+          oddsByLeg={oddsByLeg}
+          onOddsChange={setOddsForLeg}
+          draftMath={draftMath}
+          placeError={placeError}
+          onPlace={handlePlace}
+          onDiscard={discardDraft}
+          loading={loading === "place"}
+          generating={suggesting && selectedCount === 0}
+          gameCount={sheetGameCount}
+          games={state?.slate?.games ?? []}
+          stake={stake}
+          onStakeChange={setStake}
+        />
+      )}
+
+      <ParlayFlowStatus phase={loading === "settle" ? "settle" : null} />
+
+      {viewPending && (
+        <div
+          key={`${viewPending.date}-${viewPending.stake}-${viewPending.parlayOdds}`}
+          className="parlay-pending-frame mb-4"
+        >
+          <section
+            className={`parlay-pending-inner parlay-pending-inner-enter p-4 transition-opacity duration-300 ${
+              loading === "settle" ? "pointer-events-none opacity-55" : ""
+            }`}
+          >
+            {settleLock && (
+              <p className="mb-3 text-xs leading-relaxed text-[var(--text-subtle)]">
+                {settleLockHint(settleLock)}
+              </p>
+            )}
+            <PendingCard parlay={viewPending} />
+            <div className="mt-4 space-y-2">
+              <button
+                type="button"
+                onClick={() => handleSettle(viewPending.date)}
+                disabled={!!loading || settleLock?.locked !== false}
+                className="flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-black px-3 py-3 text-sm font-semibold text-white disabled:opacity-40"
+              >
+                {loading === "settle" && <ParlayButtonSpinner />}
+                {loading === "settle"
+                  ? "Settling…"
+                  : settleLock
+                    ? settleButtonLabel(settleLock)
+                    : "Settle"}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCancelPending(viewPending.date)}
+                disabled={!!loading}
+                className="flex min-h-12 w-full items-center justify-center rounded-full border border-red-200 bg-white text-sm font-semibold text-red-600 disabled:opacity-40"
+              >
+                {loading === "cancel" ? "Cancelling…" : "Cancel"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {!viewPending && viewHasSlip && (
+        <p className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--bg-inset)] px-4 py-3 text-sm text-[var(--text-muted)]">
+          Slip already settled for {formatDisplayDate(viewDate)}. Pick another
+          night to build a new one.
+        </p>
+      )}
+
+      <ParlayFlowStatus phase={loading === "place" ? "place" : null} />
+
       {progressLines.length > 0 && (
         <CollapsiblePanel
           title="Discovery log"
@@ -1143,17 +1428,12 @@ export default function Home() {
           open={showDiscoveryLog}
           onToggle={() => setShowDiscoveryLog((v) => !v)}
           className="mt-4"
+          progress={
+            scanProgress.total > 0
+              ? scanProgress.index / scanProgress.total
+              : undefined
+          }
         >
-          {scanProgress.total > 0 && (
-            <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
-              <div
-                className="h-full bg-green-600 transition-all duration-200"
-                style={{
-                  width: `${(scanProgress.index / scanProgress.total) * 100}%`,
-                }}
-              />
-            </div>
-          )}
           <div className="max-h-56 overflow-y-auto font-mono text-[11px] leading-relaxed">
             {progressLines.map((line) => (
               <p
@@ -1192,18 +1472,21 @@ export default function Home() {
           </pre>
         </CollapsiblePanel>
       )}
+        </>
+      )}
 
-      <button
-        type="button"
-        onClick={handleReset}
-        className="mt-8 w-full py-2 text-xs text-[var(--text-faint)] underline"
-      >
-        Reset simulation
-      </button>
     </main>
+      <BottomNav tab={appTab} onChange={setAppTab} />
+      <RiskSheet
+        open={riskSheetOpen}
+        onClose={() => setRiskSheetOpen(false)}
+        onPick={startSuggestWithRisk}
+      />
       <DiscoveryInfoModal
         open={discoveryInfoOpen}
         onClose={() => setDiscoveryInfoOpen(false)}
+        onReset={handleReset}
+        resetDisabled={!!loading}
       />
     </>
   );
@@ -1215,6 +1498,7 @@ function CollapsiblePanel({
   open,
   onToggle,
   className = "",
+  progress,
   children,
 }: {
   title: string;
@@ -1222,6 +1506,8 @@ function CollapsiblePanel({
   open: boolean;
   onToggle: () => void;
   className?: string;
+  /** 0–1 progress shown even when collapsed (discovery scan). */
+  progress?: number;
   children: ReactNode;
 }) {
   return (
@@ -1232,129 +1518,108 @@ function CollapsiblePanel({
         type="button"
         onClick={onToggle}
         className="flex w-full items-center justify-between text-left"
+        aria-expanded={open}
       >
         <span className="text-xs font-medium uppercase tracking-wide text-[var(--accent)]">
           {title}
         </span>
         <span className="flex items-center gap-2 text-xs text-[var(--text-subtle)]">
           {subtitle && <span>{subtitle}</span>}
-          <span>{open ? "Hide" : "Show"}</span>
+          <EyeIcon open={open} />
         </span>
       </button>
+      {progress != null && (
+        <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
+          <div
+            className="h-full bg-green-600 transition-all duration-200"
+            style={{
+              width: `${Math.min(100, Math.max(0, progress * 100))}%`,
+            }}
+          />
+        </div>
+      )}
       {open && <div className="mt-3">{children}</div>}
     </section>
   );
 }
 
-function RankedPicksPanel({
-  picks,
-  legCount,
-  selectedCount,
-  onToggle,
-}: {
-  picks: RankedPick[];
-  legCount: number;
-  selectedCount: number;
-  onToggle: (rank: number) => void;
-}) {
-  const atCapacity = selectedCount >= legCount;
+function EyeIcon({ open }: { open: boolean }) {
+  if (open) {
+    return (
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        aria-hidden
+      >
+        <path
+          d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path d="M1 1l22 22" strokeLinecap="round" />
+      </svg>
+    );
+  }
   return (
-    <section className="mb-4 rounded-xl border border-[var(--border-strong)] bg-[var(--bg-card)] p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">
-          Ranked picks
-        </p>
-        <span
-          className={`text-xs font-medium ${
-            selectedCount === legCount ? "text-green-500" : "text-yellow-500"
-          }`}
-        >
-          {selectedCount}/{legCount} selected
-        </span>
-      </div>
-      <p className="mb-3 text-[11px] leading-relaxed text-[var(--text-subtle)]">
-        Top {legCount} are selected by default. Tap a selected row to remove it,
-        then tap another to add it to your parlay.
-        {atCapacity && (
-          <span className="text-[var(--text-faint)]"> Deselect one first to swap.</span>
-        )}
-      </p>
-      <ul className="max-h-72 space-y-1.5 overflow-y-auto">
-        {picks.map((pick) => {
-          const canSelect = pick.selected || !atCapacity;
-          return (
-            <li key={`${pick.rank}-${pick.player}-${pick.stat}`}>
-              <button
-                type="button"
-                onClick={() => onToggle(pick.rank)}
-                disabled={!pick.selected && !canSelect}
-                className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
-                  pick.selected
-                    ? "border-[var(--accent)]/40 bg-[var(--accent-bg)]"
-                    : canSelect
-                      ? "border-[var(--border)] bg-[var(--bg-inset)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-elevated)]"
-                      : "cursor-not-allowed border-[var(--border)] bg-[var(--bg)] opacity-50"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <span
-                      className={
-                        pick.selected
-                          ? "font-semibold text-green-400"
-                          : "text-[var(--text-muted)]"
-                      }
-                    >
-                      #{pick.rank} {pick.player}
-                    </span>
-                    <span className="ml-1 text-[var(--text-subtle)]">({pick.team})</span>
-                    <p className="mt-0.5 text-[var(--text)]">
-                      {formatMilestoneLabel(pick.stat, pick.threshold)}
-                    </p>
-                    <FiveForFive values={pick.last5} />
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p
-                      className={`font-mono text-sm font-semibold ${
-                        pick.selected ? "text-green-400" : "text-[var(--text-muted)]"
-                      }`}
-                    >
-                      {pick.score.toFixed(2)}
-                    </p>
-                    <p className="text-[10px] text-[var(--text-faint)]">score</p>
-                  </div>
-                </div>
-                <p
-                  className={`mt-1 text-[10px] font-medium uppercase ${
-                    pick.selected ? "text-green-500" : "text-[var(--text-faint)]"
-                  }`}
-                >
-                  {pick.selected ? "Selected · tap to remove" : "Tap to add"}
-                </p>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      aria-hidden
+    >
+      <path
+        d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
   );
 }
 
 function PendingCard({ parlay }: { parlay: PendingParlay }) {
+  const n = parlay.legs.length;
   return (
-    <div className="space-y-2 text-sm">
-      {parlay.legs.map((leg) => (
-        <div key={`${leg.player}-${leg.stat}`} className="text-[var(--text)]">
-          <span className="text-green-400">✦</span> {leg.player}{" "}
-          {formatMilestoneLabel(leg.stat, leg.threshold)}{" "}
-          <span className="text-[var(--text-muted)]">{formatAmerican(leg.odds)}</span>
-          <FiveForFive values={leg.last5} />
-        </div>
-      ))}
-      <p className="pt-2 text-xs text-[var(--text-muted)]">
-        Stake ${parlay.stake} · {formatAmerican(parlay.parlayOdds)} · To win $
-        {parlay.potentialPayout.toFixed(2)} · {parlay.confidence}
-      </p>
+    <div>
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <p className="text-sm font-semibold text-[var(--text)]">
+          {n}-Leg Parlay
+          <span className="font-normal text-[var(--text-muted)]">
+            {" "}
+            to win ${parlay.potentialPayout.toFixed(2)}
+          </span>
+        </p>
+        <span className="shrink-0 text-xs text-[var(--text-subtle)]">
+          {formatDisplayDate(parlay.date)}
+        </span>
+      </div>
+      <ul className="divide-y divide-[var(--border)]">
+        {parlay.legs.map((leg) => (
+          <li
+            key={`${leg.player}-${leg.stat}`}
+            className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0"
+          >
+            <PlayerAvatar
+              name={leg.player}
+              espnAthleteId={leg.espnAthleteId}
+              size={40}
+            />
+            <p className="min-w-0 flex-1 truncate text-[15px] font-semibold leading-snug text-[var(--text)]">
+              {leg.player}
+            </p>
+            <span className="shrink-0 rounded-full border border-[var(--border-strong)] bg-white px-3 py-1.5 text-[12px] font-medium text-[var(--text)]">
+              {formatMilestoneLabel(leg.stat, leg.threshold)}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -1422,14 +1687,12 @@ function HistoryCard({
           </span>
           <span className="flex shrink-0 items-center gap-2">
             <span
-              className={`rounded px-2 py-0.5 text-[10px] font-medium uppercase ${win ? "bg-green-900/80 text-green-400" : "bg-red-900/80 text-red-400"}`}
+              className={`rounded px-2 py-0.5 text-[10px] font-medium uppercase ${win ? "bg-green-500/15 text-green-700" : "bg-red-500/15 text-red-600"}`}
             >
               {win ? "Win" : "Loss"}
             </span>
-            <span
-              className={`text-sm font-medium ${win ? "text-green-400" : "text-red-400"}`}
-            >
-              {win ? "+" : ""}${parlay.profit.toFixed(2)}
+            <span className="text-xs text-[var(--text-subtle)]">
+              {parlay.legs.filter((l) => l.hit).length}/{parlay.legs.length} legs
             </span>
           </span>
         </button>

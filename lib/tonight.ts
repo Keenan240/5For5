@@ -1,5 +1,12 @@
 import { fetchJson } from "./fetch";
-import { bdlHeaders, hasBdlKey, nbaSeasonYear } from "./bdl-client";
+import {
+  bdlHeaders,
+  bdlSeasonCandidates,
+  hasBdlKey,
+  nbaSeasonYear,
+  nbaSeasonYearForDate,
+} from "./bdl-client";
+import { canonicalTeamAbbrev } from "./h2h";
 import { nbaTeamId } from "./nba-teams";
 import { fetchRostersFromEspn } from "./espn-roster";
 import { formatGameTimeLabel } from "./game-time";
@@ -22,7 +29,7 @@ export type TonightSlate = {
   games: TonightGame[];
   players: TonightPlayer[];
   teamIds: number[];
-  source: "balldontlie" | "nba";
+  source: "balldontlie" | "espn" | "nba";
   rosterSource: "espn" | "nba-team-roster" | "nba-all-players" | "none";
 };
 
@@ -44,8 +51,11 @@ type BdlGame = {
   visitor_team: { id: number; abbreviation: string };
 };
 
-let slateCache: { key: string; slate: TonightSlate; at: number } | null = null;
+type SlateCacheEntry = { slate: TonightSlate; at: number };
+/** Per-date cache — avoids one night's empty result sticking on another. */
+const slateCache = new Map<string, SlateCacheEntry>();
 const CACHE_MS = 10 * 60 * 1000;
+const EMPTY_CACHE_MS = 45_000;
 
 export function getTodayEastern(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -53,8 +63,8 @@ export function getTodayEastern(): string {
   }).format(new Date());
 }
 
-function seasonLabel(): string {
-  const y = nbaSeasonYear();
+function seasonLabel(forDate?: string): string {
+  const y = forDate ? nbaSeasonYearForDate(forDate) : nbaSeasonYear();
   return `${y}-${String(y + 1).slice(-2)}`;
 }
 
@@ -67,56 +77,95 @@ function uniqueAbbrevs(games: { home: string; away: string }[]): string[] {
   return [...set];
 }
 
+function cacheTtlMs(slate: TonightSlate): number {
+  return slate.games.length === 0 ? EMPTY_CACHE_MS : CACHE_MS;
+}
+
 export async function getSlateForDate(
   date: string,
   opts?: { fresh?: boolean }
 ): Promise<TonightSlate> {
-  const cacheKey = `${date}-v4`;
+  const cacheKey = `${date}-v8`;
+  const hit = slateCache.get(cacheKey);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  const ttl = hit ? cacheTtlMs(hit.slate) : 0;
 
-  if (
-    !opts?.fresh &&
-    slateCache &&
-    slateCache.key === cacheKey &&
-    Date.now() - slateCache.at < CACHE_MS
-  ) {
-    return slateCache.slate;
+  if (hit && age < ttl) {
+    if (!opts?.fresh || age < 30_000) {
+      return hit.slate;
+    }
+    const refreshed = await refreshGameStatuses(hit.slate);
+    slateCache.set(cacheKey, { slate: refreshed, at: Date.now() });
+    return refreshed;
   }
 
-  let slate: TonightSlate;
+  // BDL → ESPN scoreboard → NBA stats. Never trust a single empty source.
+  let slate: TonightSlate | null = null;
 
   if (hasBdlKey()) {
     slate = await getSlateFromBdl(date);
-    if (slate.games.length > 0) {
-      slateCache = { key: cacheKey, slate, at: Date.now() };
-      return slate;
+  }
+
+  if (!slate || slate.games.length === 0) {
+    const espnSlate = await getSlateFromEspn(date);
+    if (espnSlate.games.length > 0) {
+      slate = espnSlate;
+    } else if (!slate) {
+      slate = espnSlate;
     }
   }
 
-  slate = await getSlateFromNba(date);
-  slateCache = { key: cacheKey, slate, at: Date.now() };
-  return slate;
+  if (!slate || slate.games.length === 0) {
+    const nbaSlate = await getSlateFromNba(date);
+    if (nbaSlate.games.length > 0 || !slate) {
+      slate = nbaSlate;
+    }
+  }
+
+  const finalSlate = slate ?? emptySlate(date, "nba");
+  slateCache.set(cacheKey, { slate: finalSlate, at: Date.now() });
+  return finalSlate;
 }
 
 export async function getTonightSlate(): Promise<TonightSlate> {
   return getSlateForDate(getTodayEastern());
 }
 
-/** Games from BallDontLie; rosters via NBA team endpoints (not scoreboard) */
-async function getSlateFromBdl(date: string): Promise<TonightSlate> {
-  const season = nbaSeasonYear();
-  const gamesResult = await fetchJson<{ data: BdlGame[] }>(
-    `${BDL_BASE}/games?dates[]=${date}&seasons[]=${season}&per_page=100`,
+/** Games from BallDontLie; rosters via ESPN/NBA. null = request failed. */
+async function getSlateFromBdl(date: string): Promise<TonightSlate | null> {
+  // Prefer date-only (avoids wrong seasons[] filtering out opening night).
+  // If empty, retry with season candidates derived from the calendar date.
+  let gamesResult = await fetchJson<{ data: BdlGame[] }>(
+    `${BDL_BASE}/games?dates[]=${date}&per_page=100`,
     { headers: bdlHeaders() }
   );
 
-  const games = gamesResult.data?.data ?? [];
+  if (!gamesResult.ok) return null;
+
+  let games = (gamesResult.data?.data ?? []).filter(
+    (g) => normalizeBdlGameDate(g) === date
+  );
+  if (games.length === 0) {
+    const seasons = bdlSeasonCandidates(date)
+      .map((s) => `seasons[]=${s}`)
+      .join("&");
+    gamesResult = await fetchJson<{ data: BdlGame[] }>(
+      `${BDL_BASE}/games?dates[]=${date}&${seasons}&per_page=100`,
+      { headers: bdlHeaders() }
+    );
+    if (!gamesResult.ok) return null;
+    games = (gamesResult.data?.data ?? []).filter(
+      (g) => normalizeBdlGameDate(g) === date
+    );
+  }
+
   if (games.length === 0) {
     return emptySlate(date, "balldontlie");
   }
 
   const slateGames: TonightGame[] = games.map((g) => ({
-    home: g.home_team.abbreviation,
-    away: g.visitor_team.abbreviation,
+    home: canonicalTeamAbbrev(g.home_team.abbreviation),
+    away: canonicalTeamAbbrev(g.visitor_team.abbreviation),
     status: formatGameTimeLabel({
       datetimeUtc: g.datetime,
       statusText: g.status,
@@ -133,6 +182,84 @@ async function getSlateFromBdl(date: string): Promise<TonightSlate> {
     players,
     teamIds,
     source: "balldontlie",
+    rosterSource,
+  };
+}
+
+function normalizeBdlGameDate(g: BdlGame): string {
+  const raw = (g.date || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  if (g.datetime) {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+    }).format(new Date(g.datetime));
+  }
+  return raw;
+}
+
+async function getSlateFromEspn(date: string): Promise<TonightSlate> {
+  const compact = date.replace(/-/g, "");
+  const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${compact}`;
+  const result = await fetchJson<{
+    events?: {
+      date?: string;
+      competitions?: {
+        date?: string;
+        competitors?: {
+          homeAway?: string;
+          team?: { abbreviation?: string };
+        }[];
+        status?: { type?: { description?: string; detail?: string } };
+      }[];
+    }[];
+  }>(url, undefined, 10_000);
+
+  if (!result.ok || !result.data?.events?.length) {
+    return emptySlate(date, "espn");
+  }
+
+  const games: TonightGame[] = [];
+  for (const event of result.data.events) {
+    const comp = event.competitions?.[0];
+    if (!comp?.competitors?.length) continue;
+    const home = comp.competitors.find((c) => c.homeAway === "home");
+    const away = comp.competitors.find((c) => c.homeAway === "away");
+    const homeAbbr = home?.team?.abbreviation
+      ? canonicalTeamAbbrev(home.team.abbreviation)
+      : null;
+    const awayAbbr = away?.team?.abbreviation
+      ? canonicalTeamAbbrev(away.team.abbreviation)
+      : null;
+    if (!homeAbbr || !awayAbbr) continue;
+
+    const statusText =
+      comp.status?.type?.detail ||
+      comp.status?.type?.description ||
+      "";
+    games.push({
+      home: homeAbbr,
+      away: awayAbbr,
+      status: formatGameTimeLabel({
+        datetimeUtc: comp.date || event.date,
+        statusText,
+      }),
+      postseason: false,
+    });
+  }
+
+  if (games.length === 0) {
+    return emptySlate(date, "espn");
+  }
+
+  const abbrevs = uniqueAbbrevs(games);
+  const { players, rosterSource, teamIds } = await resolveRostersForTeams(abbrevs);
+
+  return {
+    date,
+    games,
+    players,
+    teamIds,
+    source: "espn",
     rosterSource,
   };
 }
@@ -264,6 +391,50 @@ async function fetchRosterViaCommonAllPlayers(
   return dedupePlayers(players);
 }
 
+/** Update only game status labels; keep cached rosters. */
+async function refreshGameStatuses(slate: TonightSlate): Promise<TonightSlate> {
+  const espn = await getSlateFromEspn(slate.date);
+  if (espn.games.length > 0) {
+    return {
+      ...slate,
+      games: espn.games,
+      source: "espn",
+      // keep existing rosters if already loaded
+      players: slate.players.length ? slate.players : espn.players,
+      rosterSource: slate.players.length ? slate.rosterSource : espn.rosterSource,
+      teamIds: slate.teamIds.length ? slate.teamIds : espn.teamIds,
+    };
+  }
+
+  if (hasBdlKey()) {
+    const gamesResult = await fetchJson<{ data: BdlGame[] }>(
+      `${BDL_BASE}/games?dates[]=${slate.date}&per_page=100`,
+      { headers: bdlHeaders() },
+      8_000
+    );
+    if (gamesResult.ok && gamesResult.data?.data?.length) {
+      const nextGames: TonightGame[] = gamesResult.data.data
+        .filter((g) => normalizeBdlGameDate(g) === slate.date)
+        .map((g) => ({
+          home: canonicalTeamAbbrev(g.home_team.abbreviation),
+          away: canonicalTeamAbbrev(g.visitor_team.abbreviation),
+          status: formatGameTimeLabel({
+            datetimeUtc: g.datetime,
+            statusText: g.status,
+          }),
+          postseason: g.postseason,
+        }));
+      if (nextGames.length) {
+        return { ...slate, games: nextGames, source: "balldontlie" };
+      }
+    }
+  }
+
+  const scoreboard = await fetchNbaScoreboard(slate.date);
+  if (scoreboard.games.length === 0) return slate;
+  return { ...slate, games: scoreboard.games, source: "nba" };
+}
+
 async function fetchNbaScoreboard(date: string): Promise<{
   games: TonightGame[];
   teamIds: number[];
@@ -274,7 +445,7 @@ async function fetchNbaScoreboard(date: string): Promise<{
   const url = `https://stats.nba.com/stats/scoreboardv2?GameDate=${gameDate}&LeagueID=00&DayOffset=0`;
   const result = await fetchJson<{
     resultSets: { name: string; headers: string[]; rowSet: unknown[][] }[];
-  }>(url, { headers: NBA_HEADERS }, NBA_ROSTER_TIMEOUT_MS);
+  }>(url, { headers: NBA_HEADERS }, 12_000);
 
   if (!result.ok || !result.data) {
     return { games: [], teamIds: [] };

@@ -3,30 +3,80 @@
 @theme {
   --font-sans: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, "Cascadia Code", monospace;
+  --color-black: #323232;
 }
 
 :root {
-  --bg: #0a0a0a;
-  --bg-card: #141414;
-  --bg-inset: #0f0f0f;
-  --bg-elevated: #1a1a1a;
-  --border: #222222;
-  --border-strong: #333333;
-  --text: #ffffff;
-  --text-muted: #888888;
-  --text-subtle: #666666;
-  --text-faint: #555555;
-  --accent: #4ade80;
-  --accent-dim: #166534;
-  --accent-bg: rgba(22, 101, 52, 0.35);
-  --warn: #fbbf24;
-  --danger: #f87171;
+  /* Light shell (mockup-aligned); dark cards kept for legacy panels via aliases */
+  --bg: #f4f4f5;
+  --bg-card: #ffffff;
+  --bg-inset: #f4f4f5;
+  --bg-elevated: #ffffff;
+  --surface: #ffffff;
+  --surface-muted: #ececee;
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --text: #323232;
+  --text-muted: #71717a;
+  --text-subtle: #a1a1aa;
+  --text-faint: #a1a1aa;
+  --accent: #16a34a;
+  --accent-dim: #15803d;
+  --accent-bg: rgba(22, 163, 74, 0.12);
+  --warn: #d97706;
+  --danger: #dc2626;
 }
 
 body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
+}
+
+.date-strip-scroll::-webkit-scrollbar,
+.sheet-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.sheet-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sheet-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-muted) 0%,
+    #f4f4f5 45%,
+    var(--surface-muted) 90%
+  );
+  background-size: 200% 100%;
+  animation: sheet-skeleton-shimmer 1.15s ease-in-out infinite;
+}
+
+@keyframes sheet-skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.sheet-picks-reveal {
+  animation: sheet-picks-reveal 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes sheet-picks-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .font-mono {

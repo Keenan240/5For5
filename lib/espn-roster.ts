@@ -37,6 +37,7 @@ const ESPN_TEAM_SLUG: Record<string, string> = {
 
 type EspnRosterResponse = {
   athletes?: {
+    id?: string | number;
     displayName?: string;
     fullName?: string;
     status?: { type?: string; name?: string };
@@ -69,7 +70,13 @@ export async function fetchRostersFromEspn(
         if (!name) continue;
         const statusType = a.status?.type?.toLowerCase() ?? "";
         if (statusType === "inactive" || isEspnPlayerOut(a.status)) continue;
-        players.push({ player: name, team: abbrev.toUpperCase() });
+        const espnAthleteId =
+          a.id != null && String(a.id).length > 0 ? String(a.id) : undefined;
+        players.push({
+          player: name,
+          team: abbrev.toUpperCase(),
+          espnAthleteId,
+        });
       }
     })
   );

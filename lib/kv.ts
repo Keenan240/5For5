@@ -1,12 +1,13 @@
 import { Redis } from "@upstash/redis";
 import { promises as fs } from "fs";
 import path from "path";
+import { normalizeParlayState } from "./pending";
 import type { ParlayState } from "./types";
 
 const KEY = "parlay_state";
 const DEFAULT_STATE: ParlayState = {
-  bankroll: 200,
-  pending: null,
+  bankroll: 0,
+  pending: [],
   history: [],
 };
 
@@ -76,12 +77,12 @@ export async function getState(): Promise<ParlayState> {
   const redis = getRedis();
   if (redis) {
     const state = await redis.get<ParlayState>(KEY);
-    return state ?? { ...DEFAULT_STATE };
+    return normalizeParlayState(state ?? { ...DEFAULT_STATE });
   }
   if (onVercel()) {
     return { ...DEFAULT_STATE };
   }
-  return (await readLocal()) ?? { ...DEFAULT_STATE };
+  return normalizeParlayState((await readLocal()) ?? { ...DEFAULT_STATE });
 }
 
 export async function setState(state: ParlayState): Promise<void> {

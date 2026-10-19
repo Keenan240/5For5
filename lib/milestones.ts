@@ -35,17 +35,24 @@ export function qualifiesForMilestone(values: number[], threshold: number): bool
 /** Walk ladder upward; stop at first failure; return highest passing threshold */
 export function discoverMilestone(values: number[], ladder: number[]): number | null {
   if (values.length < 5) return null;
-  const l5Average = values.reduce((a, b) => a + b, 0) / values.length;
-  const dynamicFloor = l5Average * 0.5;
-  const eligibleLadder = ladder.filter((t) => t >= dynamicFloor);
-  if (eligibleLadder.length === 0) return null;
 
   let best: number | null = null;
-  for (const t of eligibleLadder) {
+  for (const t of ladder) {
     if (qualifiesForMilestone(values, t)) best = t;
     else break;
   }
   return best;
+}
+
+/**
+ * All ladder rungs at or below the highest 5/5 line (e.g. 15+ → also 5+, 10+).
+ * Lower lines always qualify if the higher one does.
+ */
+export function thresholdsAtOrBelow(
+  highest: number,
+  ladder: number[]
+): number[] {
+  return ladder.filter((t) => t <= highest);
 }
 
 export function averageBuffer(values: number[], threshold: number): number {
@@ -68,4 +75,31 @@ export function formatMilestoneLabel(stat: StatCategory, threshold: number): str
     Blocks: "BLK",
   };
   return `${threshold}+ ${abbrev[stat]}`;
+}
+
+/**
+ * How “close” a last-5 value is to the leg line (for color coding).
+ * Tuned to typical ladder step size per category.
+ */
+export const LAST5_NEAR_MARGIN: Record<StatCategory, number> = {
+  Points: 3, // 15 → 16–18 yellow, 19+ green
+  Rebounds: 2,
+  Assists: 2,
+  "3-Pointers": 1,
+  Steals: 1,
+  Blocks: 1,
+};
+
+export type Last5Tone = "danger" | "warn" | "safe";
+
+/** Red = at/under line, yellow = thin cushion, green = comfortable. */
+export function last5ValueTone(
+  value: number,
+  threshold: number,
+  stat: StatCategory
+): Last5Tone {
+  const margin = value - threshold;
+  if (margin <= 0) return "danger";
+  if (margin <= LAST5_NEAR_MARGIN[stat]) return "warn";
+  return "safe";
 }

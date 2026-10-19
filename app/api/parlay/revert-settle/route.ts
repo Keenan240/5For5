@@ -11,9 +11,8 @@ export async function POST() {
       );
     }
 
-    const settleLock = result.state.pending
-      ? await getSettleLockStatus(result.state.pending)
-      : null;
+    const focus = result.state.pending[0] ?? null;
+    const settleLock = focus ? await getSettleLockStatus(focus) : null;
 
     return Response.json({
       ok: true,

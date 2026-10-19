@@ -40,7 +40,7 @@ export function ParlayFlowStatus({ phase }: ParlayFlowStatusProps) {
     phase === "place" ? "Placing your parlay" : "Settling your parlay";
   const subtitle =
     phase === "place"
-      ? "Locking in legs and updating bankroll…"
+      ? "Locking in legs and updating net…"
       : "Checking box scores and finalizing results…";
 
   return (

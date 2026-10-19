@@ -31,5 +31,5 @@ Deploy to Vercel → open in Safari → Share → Add to Home Screen.
 
 1. Push to GitHub and import in Vercel
 2. Storage → **Upstash Redis** → Connect to project (required for place/settle)
-3. Add env vars: `BALLDONTLIE_API_KEY`, `NBA_SEASON=2025` (Redis vars are auto-added)
+3. Add env vars: `BALLDONTLIE_API_KEY`, `NBA_SEASON=2026` (Redis vars are auto-added)
 4. Add PWA icons: `public/icon-192.png` and `public/icon-512.png` (optional)

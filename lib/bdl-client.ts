@@ -12,8 +12,40 @@ export function hasBdlKey(): boolean {
   return Boolean(process.env.BALLDONTLIE_API_KEY);
 }
 
+/**
+ * NBA season start year for a calendar date (ET YYYY-MM-DD).
+ * Oct–Dec → that year; Jan–Sep → previous year.
+ */
+export function nbaSeasonYearForDate(ymd: string): number {
+  const [y, m] = ymd.split("-").map(Number);
+  if (!y || !m) {
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+    }).format(new Date());
+    const [ty, tm] = today.split("-").map(Number);
+    return tm >= 10 ? ty : ty - 1;
+  }
+  return m >= 10 ? y : y - 1;
+}
+
+/** Current / configured season start year (2026 = 2026-27). */
 export function nbaSeasonYear(): number {
-  return parseInt(process.env.NBA_SEASON || "2025", 10);
+  if (process.env.NBA_SEASON) {
+    return parseInt(process.env.NBA_SEASON, 10);
+  }
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+  }).format(new Date());
+  return nbaSeasonYearForDate(today);
+}
+
+/** Season years to try against BallDontLie (date-derived ±1, plus env). */
+export function bdlSeasonCandidates(ymd?: string): number[] {
+  const primary = ymd ? nbaSeasonYearForDate(ymd) : nbaSeasonYear();
+  const fromEnv = process.env.NBA_SEASON
+    ? parseInt(process.env.NBA_SEASON, 10)
+    : primary;
+  return [...new Set([primary, fromEnv, primary + 1, primary - 1])];
 }
 
 type BdlMeta = { next_cursor?: number | null };

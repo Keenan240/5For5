@@ -1,3 +1,4 @@
+import { isStakeTier } from "@/lib/odds";
 import { runPlaceParlay } from "@/lib/place-parlay";
 import type { ParlayLeg, RankedPoolPick } from "@/lib/types";
 
@@ -7,6 +8,8 @@ export async function POST(request: Request) {
     const date = String(body.date ?? "");
     const legs = body.legs as ParlayLeg[] | undefined;
     const rankedPool = body.rankedPool as RankedPoolPick[] | undefined;
+    const stakeRaw = Number(body.stake);
+    const stake = isStakeTier(stakeRaw) ? stakeRaw : undefined;
 
     if (!date || !legs?.length) {
       return Response.json(
@@ -15,7 +18,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await runPlaceParlay({ date, legs, rankedPool });
+    const result = await runPlaceParlay({ date, legs, rankedPool, stake });
 
     if (!result.ok) {
       return Response.json(

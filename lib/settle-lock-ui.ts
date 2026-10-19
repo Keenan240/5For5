@@ -17,16 +17,40 @@ export type SettleLockView = {
   waitingPlayers?: string[];
 };
 
+export function formatCountdown(remainingMs: number): string {
+  if (remainingMs <= 0) return "0:00:00";
+  const totalSec = Math.ceil(remainingMs / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 export function settleLockHint(lock: SettleLockView): string {
-  if (!lock.statsReady) {
+  if (lock.deferredAfterRevert || lock.lockReason === "deferred") {
+    return `Settle deferred until ${lock.unlockLabel} after revert — try again tomorrow morning.`;
+  }
+  if (!lock.locked) {
+    return "Box scores are in — settle when ready.";
+  }
+  if (lock.lockReason === "waiting_stats") {
     const waiting = lock.waitingPlayers?.length
       ? ` Waiting on: ${lock.waitingPlayers.join(", ")}.`
       : "";
-    return `Settle anytime — feeds may still be updating.${waiting} Revert if results look wrong.`;
+    return `Games are done — waiting for tonight's box scores.${waiting}`;
   }
-  return "Settle when ready — revert if box scores look wrong.";
+  return `Waiting for all games to finish — fallback unlock ${lock.unlockLabel}.`;
 }
 
-export function settleButtonLabel(_lock: SettleLockView): string {
-  return "Settle";
+export function settleButtonLabel(lock: SettleLockView): string {
+  if (!lock.locked) return "Settle";
+  if (lock.lockReason === "waiting_stats") return "Waiting for stats…";
+  if (
+    (lock.lockReason === "deferred" || lock.lockReason === "waiting_games") &&
+    lock.remainingMs != null &&
+    lock.remainingMs > 0
+  ) {
+    return formatCountdown(lock.remainingMs);
+  }
+  return "Settle locked";
 }

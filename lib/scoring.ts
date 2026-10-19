@@ -5,13 +5,10 @@ import {
   LADDERS,
 
   discoverMilestone,
-
+  thresholdsAtOrBelow,
   extractStatValues,
-
   averageBuffer,
-
   formatMilestoneLabel,
-
 } from "./milestones";
 
 import {
@@ -44,20 +41,13 @@ import {
 
 } from "./stats";
 
-import {
-  formatH2hVetoLine,
-  gamesVsOpponent,
-  passesH2hVetoVsOpponent,
-} from "./h2h";
-
+import { gamesVsOpponent } from "./h2h";
+import { normalizeGameLogDate, slateDateCandidates } from "./dates";
 import { opponentForTeam, type GameMatchup } from "./slate-games";
-
 import { mapWithConcurrency } from "./concurrency";
 import { getEspnAthleteId } from "./espn";
-
 import type { TonightSlate } from "./tonight";
-
-import type { QualifiedCandidate, ParlayLeg } from "./types";
+import type { GameLog, QualifiedCandidate, ParlayLeg } from "./types";
 
 import type {
 
@@ -70,20 +60,17 @@ import type {
 
 
 export type TonightPlayer = {
-
   player: string;
-
   team: string;
-
   nbaPlayerId?: string;
-
+  espnAthleteId?: string;
 };
 
 
 
 export const PARLAY_LEG_COUNT = 5;
 
-const DISCOVERY_CONCURRENCY = 12;
+const DISCOVERY_CONCURRENCY = 20;
 
 export type DiscoveryOptions = {
   h2hMode?: boolean;
@@ -219,6 +206,8 @@ function milestoneToCandidate(
 
     score: m.score,
 
+    espnAthleteId: p.espnAthleteId,
+
   };
 
 }
@@ -265,14 +254,16 @@ async function evaluatePlayerStandard(
     p.nbaPlayerId,
     options.beforeSlateYmd
       ? { beforeSlateYmd: options.beforeSlateYmd }
-      : undefined
+      : undefined,
+    p.espnAthleteId
   );
 
   if (logs.length < 5) {
 
     const playerId = await getPlayerId(p.player, idMap, p.nbaPlayerId);
 
-    const hasEspn = await getEspnAthleteId(p.player);
+    const hasEspn =
+      p.espnAthleteId || (await getEspnAthleteId(p.player));
 
     return {
 
@@ -290,37 +281,7 @@ async function evaluatePlayerStandard(
 
   }
 
-  const milestones: MilestoneHit[] = [];
-
-  for (const stat of STAT_CATEGORIES) {
-
-    const values = extractStatValues(logs, stat);
-
-    const threshold = discoverMilestone(values, LADDERS[stat]);
-
-    if (threshold === null) continue;
-
-    const buffer = averageBuffer(values, threshold);
-
-    const odds = estimateOddsFromBuffer(buffer, stat);
-
-    milestones.push({
-
-      stat,
-
-      threshold,
-
-      last5: values,
-
-      buffer,
-
-      odds,
-
-      score: scoreLeg(buffer, odds, threshold),
-
-    });
-
-  }
+  const milestones = buildMilestoneHits(logs);
 
   if (milestones.length === 0) {
 
@@ -356,6 +317,32 @@ async function evaluatePlayerStandard(
 
 }
 
+function buildMilestoneHits(
+  logs: GameLog[],
+  extra?: Partial<MilestoneHit>
+): MilestoneHit[] {
+  const milestones: MilestoneHit[] = [];
+  for (const stat of STAT_CATEGORIES) {
+    const values = extractStatValues(logs, stat);
+    const highest = discoverMilestone(values, LADDERS[stat]);
+    if (highest === null) continue;
+    for (const threshold of thresholdsAtOrBelow(highest, LADDERS[stat])) {
+      const buffer = averageBuffer(values, threshold);
+      const odds = estimateOddsFromBuffer(buffer, stat);
+      milestones.push({
+        stat,
+        threshold,
+        last5: values,
+        buffer,
+        odds,
+        score: scoreLeg(buffer, odds, threshold),
+        ...extra,
+      });
+    }
+  }
+  return milestones;
+}
+
 async function evaluatePlayerH2h(
 
   p: TonightPlayer,
@@ -369,38 +356,6 @@ async function evaluatePlayerH2h(
   options: DiscoveryOptions
 
 ): Promise<PlayerEval> {
-
-  const logs = await getLast5Games(
-    p.player,
-    idMap,
-    logCache,
-    p.nbaPlayerId,
-    options.beforeSlateYmd
-      ? { beforeSlateYmd: options.beforeSlateYmd }
-      : undefined
-  );
-
-  if (logs.length < 5) {
-
-    const playerId = await getPlayerId(p.player, idMap, p.nbaPlayerId);
-
-    const hasEspn = await getEspnAthleteId(p.player);
-
-    return {
-
-      player: p,
-
-      status: !playerId && !hasEspn ? "no_id" : "short_log",
-
-      gameCount: logs.length,
-
-      milestones: [],
-
-      candidates: [],
-
-    };
-
-  }
 
   const opponent = opponentForTeam(
     p.team,
@@ -418,47 +373,32 @@ async function evaluatePlayerH2h(
     p.nbaPlayerId
   );
 
-  const vsOpp = gamesVsOpponent(fullLogs, p.team, opponent);
-
-  const milestones: MilestoneHit[] = [];
-
-  for (const stat of STAT_CATEGORIES) {
-
-    const values = extractStatValues(logs, stat);
-
-    const threshold = discoverMilestone(values, LADDERS[stat]);
-
-    if (threshold === null) continue;
-
-    if (!passesH2hVetoVsOpponent(vsOpp, stat, threshold)) continue;
-
-    const buffer = averageBuffer(values, threshold);
-
-    const odds = estimateOddsFromBuffer(buffer, stat);
-
-    milestones.push({
-
-      stat,
-
-      threshold,
-
-      last5: values,
-
-      buffer,
-
-      odds,
-
-      score: scoreLeg(buffer, odds, threshold),
-
-      h2hOpponent: opponent,
-
-      h2hGate: `L5 5/5 + H2H veto vs ${opponent}`,
-
-      h2hLine: formatH2hVetoLine(vsOpp, stat, threshold),
-
-    });
-
+  let vsOpp = gamesVsOpponent(fullLogs, p.team, opponent);
+  if (options.beforeSlateYmd) {
+    const skip = new Set(slateDateCandidates(options.beforeSlateYmd));
+    vsOpp = vsOpp.filter((g) => !skip.has(normalizeGameLogDate(g.date)));
   }
+
+  // Last 5 head-to-head games (newest first → chronological for milestone check)
+  const newest5 = vsOpp.slice(0, 5);
+  if (newest5.length < 5) {
+    const playerId = await getPlayerId(p.player, idMap, p.nbaPlayerId);
+    const hasEspn = p.espnAthleteId || (await getEspnAthleteId(p.player));
+    return {
+      player: p,
+      status: !playerId && !hasEspn ? "no_id" : "short_log",
+      gameCount: newest5.length,
+      milestones: [],
+      candidates: [],
+    };
+  }
+
+  const logs = [...newest5].reverse();
+  const milestones = buildMilestoneHits(logs, {
+    h2hOpponent: opponent,
+    h2hGate: `H2H last 5 vs ${opponent}`,
+    h2hLine: logs.map((g) => g.date.slice(5)).join(", "),
+  });
 
   if (milestones.length === 0) {
 
@@ -558,21 +498,14 @@ async function discoverFromRoster(
 
 
       emit?.({
-
         type: "player_result",
-
         player: p.player,
-
         team: p.team,
-
         status: evalResult.status,
-
         gameCount: evalResult.gameCount,
-
         milestones:
-
           evalResult.milestones.length > 0 ? evalResult.milestones : undefined,
-
+        espnAthleteId: p.espnAthleteId,
       });
 
 
@@ -669,19 +602,34 @@ export function buildParlayWithProgress(
 
 
 
-  const ranked = sorted.map((c, i) => ({
-    player: c.player,
-    team: c.team,
-    stat: c.stat,
-    threshold: c.threshold,
-    score: roundMoney(c.score * 100) / 100,
-    rank: i + 1,
-    odds: c.odds,
-    last5: c.last5,
-    buffer: roundMoney(c.buffer),
-    selected: i < legCount,
-    picked: i < legCount,
-  }));
+  const takenPlayerStat = new Set<string>();
+  const pickKeys = new Set<string>();
+  for (const c of sorted) {
+    if (pickKeys.size >= legCount) break;
+    const ps = `${c.player}|${c.stat}`;
+    if (takenPlayerStat.has(ps)) continue;
+    takenPlayerStat.add(ps);
+    pickKeys.add(`${c.player}|${c.stat}|${c.threshold}`);
+  }
+
+  const ranked = sorted.map((c, i) => {
+    const key = `${c.player}|${c.stat}|${c.threshold}`;
+    const selected = pickKeys.has(key);
+    return {
+      player: c.player,
+      team: c.team,
+      stat: c.stat,
+      threshold: c.threshold,
+      score: roundMoney(c.score * 100) / 100,
+      rank: i + 1,
+      odds: c.odds,
+      last5: c.last5,
+      buffer: roundMoney(c.buffer),
+      espnAthleteId: c.espnAthleteId,
+      selected,
+      picked: selected,
+    };
+  });
 
   emit?.({
     type: "build_ranked",
@@ -689,7 +637,9 @@ export function buildParlayWithProgress(
     parlayLegCount: legCount,
   });
 
-  const legs = sorted.slice(0, legCount);
+  const legs = sorted.filter((c) =>
+    pickKeys.has(`${c.player}|${c.stat}|${c.threshold}`)
+  );
 
   for (const row of ranked) {
     emit?.({
@@ -741,9 +691,7 @@ export function buildParlayWithProgress(
 
 
 
-  if (bankroll < stake) return null;
-
-
+  void bankroll;
 
   const avgBuffer =
 
@@ -751,7 +699,7 @@ export function buildParlayWithProgress(
 
   const confidence =
 
-    avgBuffer >= 4 && stake >= 4
+    avgBuffer >= 4 && stake >= 5
 
       ? "HIGH"
 

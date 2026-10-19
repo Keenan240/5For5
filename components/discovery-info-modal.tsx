@@ -6,9 +6,16 @@ import { createPortal } from "react-dom";
 type DiscoveryInfoModalProps = {
   open: boolean;
   onClose: () => void;
+  onReset?: () => void;
+  resetDisabled?: boolean;
 };
 
-export function DiscoveryInfoModal({ open, onClose }: DiscoveryInfoModalProps) {
+export function DiscoveryInfoModal({
+  open,
+  onClose,
+  onReset,
+  resetDisabled,
+}: DiscoveryInfoModalProps) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -81,21 +88,34 @@ export function DiscoveryInfoModal({ open, onClose }: DiscoveryInfoModalProps) {
           </p>
         </section>
 
-        <section>
+        <section className="mb-4">
           <h3 className="mb-1.5 text-sm font-medium text-[var(--accent)]">
-            H2H playoff mode
+            H2H
           </h3>
           <p className="text-sm leading-relaxed text-[var(--text-muted)]">
-            Same strict 5/5 milestone ladder and scoring as normal discovery on
-            the last five games. The only extra rule is the head-to-head veto:
-            if the player has any prior game in the merged log against
-            tonight&apos;s opponent, every such game must be at or above the same
-            milestone line; if even one matchup game is below the bar, that line
-            is not offered in H2H mode. If there is no prior game vs that opponent,
-            nothing is vetoed. Best when you care about matchup history on a
-            known opponent—not required for a normal full-slate night.
+            Instead of the player&apos;s last five games overall, discovery uses
+            their last five games against tonight&apos;s opponent only. The same
+            strict 5/5 milestone ladder and scoring apply to that head-to-head
+            window. Players without five prior matchups vs that opponent are
+            skipped.
           </p>
         </section>
+
+        {onReset && (
+          <div className="border-t border-[var(--border)] pt-3">
+            <button
+              type="button"
+              disabled={resetDisabled}
+              onClick={() => {
+                onClose();
+                onReset();
+              }}
+              className="w-full rounded-lg py-2.5 text-sm font-medium text-red-600 disabled:opacity-40 active:bg-red-50"
+            >
+              Clear history & reset
+            </button>
+          </div>
+        )}
       </div>
     </div>,
     document.body

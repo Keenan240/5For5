@@ -1,19 +1,29 @@
 import { getState } from "@/lib/kv";
 import { getSettleLockStatus } from "@/lib/settle-lock";
 import { checkAllLegsStatsReady } from "@/lib/stats";
+import { getTodayEastern } from "@/lib/tonight";
 
-export async function GET() {
+export async function GET(request: Request) {
   const state = await getState();
+  const url = new URL(request.url);
+  const dateParam = url.searchParams.get("date");
+  const date =
+    dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null;
 
-  if (!state.pending) {
+  const pending =
+    (date && state.pending.find((p) => p.date === date)) ||
+    state.pending.find((p) => p.date === getTodayEastern()) ||
+    state.pending[0] ||
+    null;
+
+  if (!pending) {
     return Response.json({
       ok: false,
       message: "No pending parlay.",
-      state: { bankroll: state.bankroll, pending: null },
+      state: { bankroll: state.bankroll, pending: state.pending },
     });
   }
 
-  const pending = state.pending;
   const legsForCheck = pending.legs.map((leg) => ({
     player: leg.player,
     stat: leg.stat,
@@ -47,6 +57,7 @@ export async function GET() {
       team: leg.team,
       stat: leg.stat,
       threshold: leg.threshold,
+      espnAthleteId: leg.espnAthleteId,
     })),
   });
 }

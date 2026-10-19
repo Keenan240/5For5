@@ -3,12 +3,16 @@ import {
   calcPayout,
   combineParlayOdds,
   formatAmerican,
+  isStakeTier,
   parlayConfidence,
   parseAmericanOdds,
   roundMoney,
   weakestStakeTier,
+  type StakeTier,
 } from "./odds";
+import { getEspnAthleteId } from "./espn";
 import { formatMilestoneLabel } from "./milestones";
+import { hasSlipForDate, normalizePendingList } from "./pending";
 import type {
   ParlayLeg,
   ParlayState,
@@ -20,6 +24,8 @@ export type PlaceParlayInput = {
   date: string;
   legs: ParlayLeg[];
   rankedPool?: RankedPoolPick[];
+  /** User-chosen $2 / $5 / $10; defaults to risk recommendation. */
+  stake?: StakeTier;
 };
 
 export type PlaceParlayResult = {
@@ -29,22 +35,19 @@ export type PlaceParlayResult = {
   error?: string;
 };
 
-
 export function buildPendingFromLegs(
   date: string,
   legs: ParlayLeg[],
   bankroll: number,
-  rankedPool?: RankedPoolPick[]
+  rankedPool?: RankedPoolPick[],
+  stakeOverride?: StakeTier
 ): { pending: PendingParlay; error?: string } {
   const legOdds = legs.map((l) => l.odds);
 
-  const stake = weakestStakeTier(legOdds);
-  if (bankroll < stake) {
-    return {
-      pending: null as unknown as PendingParlay,
-      error: `Bankroll $${bankroll} is below stake $${stake}.`,
-    };
-  }
+  const recommended = weakestStakeTier(legOdds);
+  const stake =
+    stakeOverride && isStakeTier(stakeOverride) ? stakeOverride : recommended;
+  void bankroll; // tracker mode — stake is metadata only
 
   const parlayOdds = combineParlayOdds(legOdds);
   const potentialPayout = calcPayout(stake, parlayOdds);
@@ -68,8 +71,9 @@ export async function runPlaceParlay(
 ): Promise<PlaceParlayResult> {
   let state = await getState();
 
-  if (state.pending) {
-    const error = "You already have a pending parlay. Settle it first.";
+  if (hasSlipForDate(state, input.date)) {
+    const error =
+      "You already have a slip for this night. One parlay per day — pick another date or cancel/settle the existing one.";
     return { ok: false, message: error, state, error };
   }
 
@@ -91,23 +95,29 @@ export async function runPlaceParlay(
         error: "Invalid odds",
       };
     }
-    legs.push({ ...leg, odds });
+    const espnAthleteId =
+      leg.espnAthleteId?.trim() ||
+      (await getEspnAthleteId(leg.player)) ||
+      undefined;
+    legs.push({ ...leg, odds, espnAthleteId });
   }
 
   const { pending, error } = buildPendingFromLegs(
     input.date,
     legs,
     state.bankroll,
-    input.rankedPool
+    input.rankedPool,
+    input.stake
   );
   if (error || !pending) {
     return { ok: false, message: error ?? "Could not build parlay.", state, error };
   }
 
+  const pendingList = normalizePendingList(state.pending);
   state = {
     ...state,
     bankroll: roundMoney(state.bankroll - pending.stake),
-    pending,
+    pending: [...pendingList, pending],
   };
   await setState(state);
 
@@ -117,15 +127,12 @@ export async function runPlaceParlay(
   );
 
   const summary = [
-    `PARLAY PLACED — ${pending.date}`,
+    `PARLAY LOCKED — ${pending.date}`,
     "",
     ...legLines,
     "",
     `Confidence:  ${pending.confidence}`,
-    `Stake:       $${pending.stake}`,
     `Parlay Odds: ${formatAmerican(pending.parlayOdds)}`,
-    `To Win:      $${pending.potentialPayout.toFixed(2)}`,
-    `Bankroll:    $${state.bankroll.toFixed(2)}`,
   ].join("\n");
 
   return { ok: true, message: summary, state };

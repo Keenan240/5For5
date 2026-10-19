@@ -22,6 +22,7 @@ export type RankedPick = {
   odds: number;
   last5: number[];
   buffer: number;
+  espnAthleteId?: string;
   /** @deprecated use selected */
   picked?: boolean;
   selected: boolean;
@@ -50,6 +51,7 @@ export type CreateProgressEvent =
       status: "qualified" | "short_log" | "no_id" | "no_milestone";
       gameCount?: number;
       milestones?: MilestoneHit[];
+      espnAthleteId?: string;
     }
   | {
       type: "discovery_done";

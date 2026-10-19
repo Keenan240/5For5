@@ -1,17 +1,19 @@
 import { buildRankedResultsForParlay } from "./history-ranked";
 import { getState, setState } from "./kv";
 import { roundMoney } from "./odds";
+import { normalizePendingList } from "./pending";
 import type { ParlayState } from "./types";
 
+/** Net P&L from zero: settled profits ± open stake risk. */
 export function bankrollFromHistory(state: ParlayState): number {
-  let bankroll = 200;
+  let net = 0;
   for (const entry of state.history) {
-    bankroll = roundMoney(bankroll + entry.profit);
+    net = roundMoney(net + entry.profit);
   }
-  if (state.pending) {
-    bankroll = roundMoney(bankroll - state.pending.stake);
+  for (const p of normalizePendingList(state.pending)) {
+    net = roundMoney(net - p.stake);
   }
-  return bankroll;
+  return net;
 }
 
 /** Fix live bankroll when it drifted from place/settle accounting. */

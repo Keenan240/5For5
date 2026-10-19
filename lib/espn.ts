@@ -4,6 +4,7 @@ import {
   pickBestSlateGame,
   type PickBestSlateGameOptions,
 } from "./dates";
+import { nbaSeasonYear } from "./bdl-client";
 import { canonicalTeamAbbrev } from "./h2h";
 import type { GameLog, SeasonType } from "./types";
 
@@ -14,8 +15,8 @@ const ESPN_GAMELOG =
 
 /** ESPN uses end-year; try both conventions for reliability. */
 export function espnSeasonCandidates(): number[] {
-  const y = parseInt(process.env.NBA_SEASON || "2025", 10);
-  return [...new Set([y + 1, y])];
+  const y = nbaSeasonYear();
+  return [...new Set([y + 1, y, y - 1])];
 }
 
 function normalizeName(name: string): string {
@@ -90,10 +91,14 @@ type EspnGameLogResponse = {
   }[];
 };
 
-function seasonTypeFromEspnLabel(displayName: string): SeasonType {
-  return /postseason|playoff|play-in/i.test(displayName)
-    ? "Playoffs"
-    : "Regular Season";
+function seasonTypeFromEspnLabel(
+  displayName: string
+): SeasonType | "Preseason" | null {
+  if (/preseason|exhibition/i.test(displayName)) return "Preseason";
+  if (/postseason|playoff|play-in/i.test(displayName)) return "Playoffs";
+  if (/regular/i.test(displayName)) return "Regular Season";
+  // Unknown ESPN buckets — keep rather than drop quietly.
+  return "Regular Season";
 }
 
 function matchupFromEspnEvent(meta: EspnEventMeta): string {
@@ -157,6 +162,8 @@ function parseEspnGamelogResponse(data: unknown): GameLog[] {
 
   for (const st of seasonTypes) {
     const seasonType = seasonTypeFromEspnLabel(st.displayName ?? "");
+    // Preseason inflates / pollutes last-5 vs StatMuse and betting books.
+    if (!seasonType || seasonType === "Preseason") continue;
     for (const cat of st.categories ?? []) {
       for (const e of cat.events ?? []) {
         const meta = events[e.eventId];
@@ -203,22 +210,33 @@ async function fetchEspnGameLogsForSeason(
 
 export async function getEspnGameLogs(
   playerName: string,
-  maxGames = 30
+  maxGames = 30,
+  knownAthleteId?: string
 ): Promise<GameLog[]> {
-  const athleteId = await getEspnAthleteId(playerName);
+  const athleteId = knownAthleteId || (await getEspnAthleteId(playerName));
   if (!athleteId) return [];
 
   const seasons = espnSeasonCandidates();
-  const batches = await Promise.all(
-    seasons.map((s) => fetchEspnGameLogsForSeason(athleteId, s, maxGames))
-  );
-
   const byKey = new Map<string, GameLog>();
-  for (const batch of batches) {
+  const addBatch = (batch: GameLog[]) => {
     for (const g of batch) {
       const key = `${g.date}|${g.opponent}|${g.pts}`;
       if (!byKey.has(key)) byKey.set(key, g);
     }
+  };
+
+  // Parallelize the two newest season years; only hit the third if still short.
+  const primary = await Promise.all(
+    seasons.slice(0, 2).map((s) =>
+      fetchEspnGameLogsForSeason(athleteId, s, maxGames)
+    )
+  );
+  for (const batch of primary) addBatch(batch);
+
+  if (byKey.size < maxGames && seasons[2] != null) {
+    addBatch(
+      await fetchEspnGameLogsForSeason(athleteId, seasons[2], maxGames)
+    );
   }
 
   const merged = [...byKey.values()].sort(
@@ -228,9 +246,12 @@ export async function getEspnGameLogs(
 }
 
 export async function getLast5GamesFromEspn(
-  playerName: string
+  playerName: string,
+  knownAthleteId?: string
 ): Promise<GameLog[]> {
-  return getEspnGameLogs(playerName, 5);
+  // Wider pull; parser already drops Preseason — take the newest 5 official.
+  const logs = await getEspnGameLogs(playerName, 15, knownAthleteId);
+  return logs.slice(-5);
 }
 
 export async function getLatestGameStatFromEspn(

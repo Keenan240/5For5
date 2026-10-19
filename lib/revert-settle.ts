@@ -36,24 +36,24 @@ export async function revertLastSettle(): Promise<{
 }> {
   const state = await getState();
 
-  if (state.pending) {
-    return {
-      ok: false,
-      state,
-      error: "You already have a pending parlay. Settle or remove it first.",
-    };
-  }
-
   if (state.history.length === 0) {
     return { ok: false, state, error: "No settled parlay to revert." };
   }
 
   const last = state.history[state.history.length - 1];
+  if (state.pending.some((p) => p.date === last.date)) {
+    return {
+      ok: false,
+      state,
+      error: "That night already has a pending slip.",
+    };
+  }
+
   const history = state.history.slice(0, -1);
   const pending = settledToPending(last);
 
   const next: ParlayState = {
-    pending,
+    pending: [...state.pending, pending],
     history,
     bankroll: 0,
   };

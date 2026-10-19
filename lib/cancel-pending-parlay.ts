@@ -1,5 +1,6 @@
 import { getState, setState } from "./kv";
 import { roundMoney } from "./odds";
+import { normalizePendingList } from "./pending";
 import { clearSettleLockForDate } from "./settle-lock";
 import type { ParlayState } from "./types";
 
@@ -10,10 +11,13 @@ export type CancelPendingParlayResult = {
   error?: string;
 };
 
-export async function runCancelPendingParlay(): Promise<CancelPendingParlayResult> {
+export async function runCancelPendingParlay(
+  date?: string
+): Promise<CancelPendingParlayResult> {
   const state = await getState();
+  const list = normalizePendingList(state.pending);
 
-  if (!state.pending) {
+  if (list.length === 0) {
     return {
       ok: false,
       message: "No pending parlay to cancel.",
@@ -22,11 +26,22 @@ export async function runCancelPendingParlay(): Promise<CancelPendingParlayResul
     };
   }
 
-  const pending = state.pending;
+  const pending = date
+    ? list.find((p) => p.date === date)
+    : list[0];
+  if (!pending) {
+    return {
+      ok: false,
+      message: "No pending parlay for that date.",
+      state,
+      error: "no_pending",
+    };
+  }
+
   const newState: ParlayState = {
     ...state,
     bankroll: roundMoney(state.bankroll + pending.stake),
-    pending: null,
+    pending: list.filter((p) => p.date !== pending.date),
   };
 
   await clearSettleLockForDate(pending.date);
@@ -34,7 +49,7 @@ export async function runCancelPendingParlay(): Promise<CancelPendingParlayResul
 
   return {
     ok: true,
-    message: `Pending parlay cancelled. Stake $${pending.stake} returned. Bankroll $${newState.bankroll.toFixed(2)}.`,
+    message: `Pending parlay cancelled for ${pending.date}.`,
     state: newState,
   };
 }

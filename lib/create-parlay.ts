@@ -4,7 +4,7 @@ import {
   buildParlayWithProgress,
   PARLAY_LEG_COUNT,
 } from "./scoring";
-import { getTonightSlate } from "./tonight";
+import { getSlateForDate, getTonightSlate } from "./tonight";
 import type { TonightGame } from "./tonight";
 import { filterSlateByIncludedGames } from "./slate-games";
 import { formatMilestoneLabel } from "./milestones";
@@ -12,10 +12,12 @@ import type { ProgressEmitter } from "./discovery-progress";
 import type { ParlayDraft, ParlayState } from "./types";
 
 export type CreateParlayOptions = {
-  /** Subset of tonight's games to scan; default = all games on the slate. */
+  /** Subset of slate games to scan; default = all games on the slate. */
   includedGames?: Pick<TonightGame, "away" | "home">[];
   /** Head-to-head playoff weighting for discovery scores and milestone windows. */
   h2hMode?: boolean;
+  /** Eastern YYYY-MM-DD slate to scan (default: tonight). */
+  date?: string;
 };
 
 export async function parseCreateParlayRequest(
@@ -23,6 +25,10 @@ export async function parseCreateParlayRequest(
 ): Promise<CreateParlayOptions> {
   try {
     const body = await request.json();
+    const date =
+      typeof body?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
+        ? body.date
+        : undefined;
     if (body?.includedGames && Array.isArray(body.includedGames)) {
       const includedGames = body.includedGames
         .filter(
@@ -42,11 +48,12 @@ export async function parseCreateParlayRequest(
         return {
           includedGames,
           h2hMode: body?.h2hMode === true,
+          date,
         };
       }
     }
-    if (body?.h2hMode === true) {
-      return { h2hMode: true };
+    if (body?.h2hMode === true || date) {
+      return { h2hMode: body?.h2hMode === true, date };
     }
   } catch {
     /* empty body = all games */
@@ -71,27 +78,17 @@ export async function runCreateParlay(
   legCount: number = PARLAY_LEG_COUNT,
   options: CreateParlayOptions = {}
 ): Promise<CreateParlayResult> {
-  emit({ type: "phase", message: "Loading bankroll & slate…" });
+  emit({ type: "phase", message: "Loading slate…" });
 
   const state = await getState();
 
-  if (state.pending) {
-    const error = "You already have a pending parlay. Settle it first.";
-    emit({ type: "error", error, state });
-    return { ok: false, message: error, state, error };
-  }
-
-  if (state.bankroll < 2) {
-    const error = `Bankroll $${state.bankroll} is below minimum stake.`;
-    emit({ type: "error", error, state });
-    return { ok: false, message: error, state, error };
-  }
-
-  emit({ type: "phase", message: "Fetching tonight's games & rosters…" });
-  const fullSlate = await getTonightSlate();
+  emit({ type: "phase", message: "Fetching games & rosters…" });
+  const fullSlate = options.date
+    ? await getSlateForDate(options.date)
+    : await getTonightSlate();
 
   if (fullSlate.games.length === 0) {
-    const message = `No NBA games scheduled for ${fullSlate.date} (ET). No bet placed.`;
+    const message = `No NBA games scheduled for ${fullSlate.date} (ET). Try another night on the date strip.`;
     emit({ type: "noop", message, state });
     return { ok: false, message, state };
   }
@@ -126,7 +123,7 @@ export async function runCreateParlay(
   emit({
     type: "phase",
     message: options.h2hMode
-      ? `Scanning ${slate.players.length} players (H2H mode — same L5 5/5 + veto if any vs-opponent game is under the line)…`
+      ? `Scanning ${slate.players.length} players (H2H — last 5 vs tonight’s opponent)…`
       : `Scanning ${slate.players.length} players (last 5 games via NBA or ESPN, every 5/5 milestone)…`,
   });
 
@@ -134,6 +131,7 @@ export async function runCreateParlay(
     await discoverTonightCandidatesWithProgress(slate, emit, {
       h2hMode: options.h2hMode,
       slateGames: slate.games,
+      beforeSlateYmd: slate.date,
     });
 
   const qualifiedCount = candidates.length;
@@ -163,10 +161,11 @@ export async function runCreateParlay(
     message: `Building ${legCount}-leg parlay from ${qualifiedCount} candidates…`,
   });
 
+  // Tracker mode: don't block builds on simulated bankroll.
   const parlay = buildParlayWithProgress(
     candidates,
     legCount,
-    state.bankroll,
+    Number.POSITIVE_INFINITY,
     emit
   );
 
@@ -203,9 +202,7 @@ export async function runCreateParlay(
     ...legLines,
     "",
     `Suggested confidence: ${parlay.confidence}`,
-    `Est. stake tier: $${parlay.stake} (updates when you enter FanDuel odds)`,
-    "",
-    "Enter each leg's odds below, then tap Place Parlay.",
+    "Enter each leg's FanDuel odds, then lock in the parlay.",
   ].join("\n");
 
   emit({

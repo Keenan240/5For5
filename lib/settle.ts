@@ -2,8 +2,10 @@ import { STAT_KEY } from "./milestones";
 import { formatDisplayDate } from "./dates";
 import { getGameStatForDate, loadPlayerIdMap } from "./stats";
 import { calcPayout, roundMoney } from "./odds";
+import { normalizePendingList } from "./pending";
 import type {
   ParlayState,
+  PendingParlay,
   RankedPoolPick,
   SettledParlay,
   SettledLeg,
@@ -24,13 +26,21 @@ export async function settleRankedPick(
   return { ...pick, actualValue, hit };
 }
 
-export async function settlePending(state: ParlayState): Promise<{
+export async function settlePending(
+  state: ParlayState,
+  date?: string
+): Promise<{
   state: ParlayState;
   summary: string | null;
 }> {
-  if (!state.pending) return { state, summary: null };
+  const list = normalizePendingList(state.pending);
+  if (list.length === 0) return { state, summary: null };
 
-  const pending = state.pending;
+  const pending: PendingParlay | undefined = date
+    ? list.find((p) => p.date === date)
+    : list[0];
+  if (!pending) return { state, summary: null };
+
   const idMap = await loadPlayerIdMap();
 
   const settledLegs: SettledLeg[] = await Promise.all(
@@ -68,9 +78,9 @@ export async function settlePending(state: ParlayState): Promise<{
     failureAnalysis = reasons.join(". ");
   }
 
-  // Stake already deducted at place; wins add net profit, losses change nothing.
+  // Stake already deducted at place; wins return full payout, losses stay as-is.
   const newBankroll = roundMoney(
-    allHit ? state.bankroll + profit : state.bankroll
+    allHit ? state.bankroll + payout : state.bankroll
   );
 
   let rankedResults: SettledRankedPick[] | undefined;
@@ -98,7 +108,7 @@ export async function settlePending(state: ParlayState): Promise<{
 
   const newState: ParlayState = {
     bankroll: newBankroll,
-    pending: null,
+    pending: list.filter((p) => p.date !== pending.date),
     history: [...state.history, settled],
   };
 

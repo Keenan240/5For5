@@ -30,16 +30,28 @@ export function passesOddsCap(odds: number): boolean {
   return odds > -1200;
 }
 
-/** Stake tier from single-leg American odds */
-export function stakeTierForOdds(odds: number): 2 | 4 | 6 {
-  if (odds >= -119) return 6;
-  if (odds >= -399) return 4;
+/** Allowed stake denominations ($2 / $5 / $10). */
+export type StakeTier = 2 | 5 | 10;
+
+export const STAKE_DENOMINATIONS: StakeTier[] = [2, 5, 10];
+
+/**
+ * Recommended stake from single-leg American odds.
+ * Heavier favorites (more negative) → smaller / safer size.
+ */
+export function stakeTierForOdds(odds: number): StakeTier {
+  if (odds >= -119) return 10;
+  if (odds >= -399) return 5;
   return 2;
 }
 
-export function weakestStakeTier(legOdds: number[]): 2 | 4 | 6 {
+export function weakestStakeTier(legOdds: number[]): StakeTier {
   const tiers = legOdds.map(stakeTierForOdds);
-  return Math.min(...tiers) as 2 | 4 | 6;
+  return Math.min(...tiers) as StakeTier;
+}
+
+export function isStakeTier(n: number): n is StakeTier {
+  return n === 2 || n === 5 || n === 10;
 }
 
 /**
@@ -90,10 +102,19 @@ export function parseAmericanOdds(input: string): number | null {
   return n;
 }
 
-export function stakeTierLabel(tier: 2 | 4 | 6): string {
-  if (tier === 6) return "$6 · higher risk";
-  if (tier === 4) return "$4 · medium risk";
-  return "$2 · safer";
+export type RiskPreference = "LOW" | "MEDIUM" | "HIGH";
+
+/** Stake size tied to the risk preference chosen before Suggest 5. */
+export function stakeTierForRisk(risk: RiskPreference): StakeTier {
+  if (risk === "LOW") return 10;
+  if (risk === "HIGH") return 2;
+  return 5;
+}
+
+export function stakeTierLabel(tier: StakeTier): string {
+  if (tier === 10) return "$10 · low risk";
+  if (tier === 5) return "$5 · medium risk";
+  return "$2 · high risk";
 }
 
 export function parlayConfidence(
@@ -102,7 +123,7 @@ export function parlayConfidence(
 ): "LOW" | "MEDIUM" | "HIGH" {
   const avgBuffer =
     legs.reduce((sum, l) => sum + l.buffer, 0) / Math.max(legs.length, 1);
-  if (avgBuffer >= 4 && stake >= 4) return "HIGH";
+  if (avgBuffer >= 4 && stake >= 5) return "HIGH";
   if (avgBuffer >= 2) return "MEDIUM";
   return "LOW";
 }
