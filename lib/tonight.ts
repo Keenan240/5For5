@@ -91,6 +91,18 @@ export async function getSlateForDate(
   date: string,
   opts?: GetSlateOptions
 ): Promise<TonightSlate> {
+  try {
+    return await getSlateForDateInner(date, opts);
+  } catch (err) {
+    console.error("getSlateForDate failed:", err);
+    return emptySlate(date, "espn");
+  }
+}
+
+async function getSlateForDateInner(
+  date: string,
+  opts?: GetSlateOptions
+): Promise<TonightSlate> {
   const gamesOnly = opts?.gamesOnly === true;
   const cacheKey = `${date}-v9${gamesOnly ? "-g" : ""}`;
   const hit = slateCache.get(cacheKey);

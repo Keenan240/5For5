@@ -80,12 +80,26 @@ export async function runCreateParlay(
 ): Promise<CreateParlayResult> {
   emit({ type: "phase", message: "Loading slate…" });
 
-  const state = await getState();
+  let state;
+  try {
+    state = await getState();
+  } catch (err) {
+    console.error("create getState failed:", err);
+    state = { bankroll: 0, pending: [], history: [] };
+  }
 
   emit({ type: "phase", message: "Fetching games & rosters…" });
-  const fullSlate = options.date
-    ? await getSlateForDate(options.date)
-    : await getTonightSlate();
+  let fullSlate;
+  try {
+    fullSlate = options.date
+      ? await getSlateForDate(options.date)
+      : await getTonightSlate();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : "slate fetch failed";
+    const message = `Couldn't load slate for discovery (${detail}).`;
+    emit({ type: "error", error: message });
+    return { ok: false, message, state, error: message };
+  }
 
   if (fullSlate.games.length === 0) {
     const message = `No NBA games scheduled for ${fullSlate.date} (ET). Try another night on the date strip.`;

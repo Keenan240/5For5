@@ -76,8 +76,14 @@ export class StorageNotConfiguredError extends Error {
 export async function getState(): Promise<ParlayState> {
   const redis = getRedis();
   if (redis) {
-    const state = await redis.get<ParlayState>(KEY);
-    return normalizeParlayState(state ?? { ...DEFAULT_STATE });
+    try {
+      const state = await redis.get<ParlayState>(KEY);
+      return normalizeParlayState(state ?? { ...DEFAULT_STATE });
+    } catch (err) {
+      // Upstash throws plain "fetch failed" when REST is unreachable.
+      console.error("Redis getState failed:", err);
+      return { ...DEFAULT_STATE };
+    }
   }
   if (onVercel()) {
     return { ...DEFAULT_STATE };
@@ -88,8 +94,16 @@ export async function getState(): Promise<ParlayState> {
 export async function setState(state: ParlayState): Promise<void> {
   const redis = getRedis();
   if (redis) {
-    await redis.set(KEY, state);
-    return;
+    try {
+      await redis.set(KEY, state);
+      return;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : "Redis write failed";
+      console.error("Redis setState failed:", err);
+      throw new Error(
+        `Database unreachable (${detail}). Check Upstash Redis in Vercel → Storage.`
+      );
+    }
   }
   if (onVercel()) {
     throw new StorageNotConfiguredError();

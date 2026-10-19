@@ -25,11 +25,21 @@ export async function POST(request: Request) {
         await runCreateParlay(send, undefined, options);
       } catch (err) {
         console.error("Create parlay stream error:", err);
-        const detail =
-          err instanceof Error ? err.message : "Unknown create error";
+        const parts: string[] = [];
+        if (err instanceof Error) {
+          parts.push(err.message);
+          const cause = (err as Error & { cause?: unknown }).cause;
+          if (cause instanceof Error && cause.message) {
+            parts.push(cause.message);
+          } else if (typeof cause === "string" && cause) {
+            parts.push(cause);
+          }
+        } else {
+          parts.push("Unknown create error");
+        }
         send({
           type: "error",
-          error: `Failed to create parlay: ${detail}`,
+          error: `Failed to create parlay: ${parts.join(" — ")}`,
         });
       } finally {
         controller.close();
