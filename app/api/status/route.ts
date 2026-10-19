@@ -75,11 +75,16 @@ async function resolveSlate(
 function emptyPayload(
   focusDate: string,
   state: ParlayState,
-  error?: string
+  error?: string,
+  storage?: { ok: boolean; detail?: string }
 ) {
+  const mode = storageMode();
+  const ok = storage?.ok ?? mode === "local";
   return {
     ...state,
-    storage: storageMode(),
+    storage: mode,
+    storageOk: ok,
+    storageDetail: ok ? undefined : storage?.detail,
     qualifiedCount: null,
     sliderMax: 8,
     slate: {
@@ -109,6 +114,8 @@ export async function GET(request: Request) {
     pending: [],
     history: [],
   };
+  let storageOk = storageMode() !== "none";
+  let storageDetail: string | undefined;
 
   try {
     state = await getState();
@@ -119,6 +126,11 @@ export async function GET(request: Request) {
     }
   } catch (err) {
     console.error("status getState failed:", err);
+    storageOk = false;
+    storageDetail =
+      err instanceof Error
+        ? err.message
+        : "Database unreachable. Check Upstash Redis in Vercel → Storage.";
   }
 
   let slate;
@@ -130,7 +142,8 @@ export async function GET(request: Request) {
       emptyPayload(
         focusDate,
         state,
-        err instanceof Error ? err.message : "slate_failed"
+        err instanceof Error ? err.message : "slate_failed",
+        { ok: storageOk, detail: storageDetail }
       )
     );
   }
@@ -192,6 +205,8 @@ export async function GET(request: Request) {
   return Response.json({
     ...state,
     storage: storageMode(),
+    storageOk,
+    storageDetail: storageOk ? undefined : storageDetail,
     qualifiedCount: null,
     sliderMax: 8,
     slate: {

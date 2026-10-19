@@ -103,6 +103,9 @@ type StatusResponse = ParlayState & {
   slate?: SlateInfo;
   settleLock?: SettleLockInfo | null;
   settleLocks?: Record<string, SettleLockInfo>;
+  storage?: "redis" | "local" | "none";
+  storageOk?: boolean;
+  storageDetail?: string;
 };
 
 type ProgressLine = {
@@ -1135,6 +1138,19 @@ export default function Home() {
         onSelect={(ymd) => void handleViewDateChange(ymd)}
         disabled={!!loading || slateLoading}
       />
+
+      {state?.storageOk === false && (
+        <div
+          className="mb-3 rounded-2xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"
+          role="alert"
+        >
+          <p className="font-semibold">Database unreachable</p>
+          <p className="mt-0.5 text-red-600/90">
+            {state.storageDetail ??
+              "Reconnect Upstash Redis in Vercel → Storage, then Redeploy."}
+          </p>
+        </div>
+      )}
 
       <SlateGamesList
         games={state?.slate?.date === viewDate ? state.slate.games : []}

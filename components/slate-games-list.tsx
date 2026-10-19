@@ -11,6 +11,25 @@ type SlateGamesListProps = {
 };
 
 const PREVIEW_COUNT = 3;
+const SKELETON_COUNT = 3;
+
+function GameRowSkeleton({ delayMs }: { delayMs: number }) {
+  return (
+    <li
+      className="flex items-center gap-3 px-2 py-2.5"
+      style={{ animationDelay: `${delayMs}ms` }}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="sheet-skeleton h-7 w-7 shrink-0 rounded-full" />
+        <div className="sheet-skeleton h-3.5 w-10 rounded" />
+        <div className="sheet-skeleton h-2.5 w-3 shrink-0 rounded" />
+        <div className="sheet-skeleton h-7 w-7 shrink-0 rounded-full" />
+        <div className="sheet-skeleton h-3.5 w-10 rounded" />
+      </div>
+      <div className="sheet-skeleton h-3.5 w-12 shrink-0 rounded" />
+    </li>
+  );
+}
 
 export function SlateGamesList({ games, loading }: SlateGamesListProps) {
   const [showAll, setShowAll] = useState(false);
@@ -42,7 +61,13 @@ export function SlateGamesList({ games, loading }: SlateGamesListProps) {
         )}
       </div>
 
-      {loading ? null : count === 0 ? (
+      {loading ? (
+        <ul className="divide-y divide-[var(--border)]">
+          {Array.from({ length: SKELETON_COUNT }, (_, i) => (
+            <GameRowSkeleton key={i} delayMs={i * 90} />
+          ))}
+        </ul>
+      ) : count === 0 ? (
         <p className="px-1 pb-1 text-xs text-[var(--text-muted)]">
           No NBA games this night — pick another date above.
         </p>

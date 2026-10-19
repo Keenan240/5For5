@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { formatMilestoneLabel } from "@/lib/milestones";
 import {
   STAKE_DENOMINATIONS,
@@ -43,6 +50,15 @@ type ParlaySheetProps = {
   stake: StakeTier;
   onStakeChange: (stake: StakeTier) => void;
 };
+
+const COLLAPSED_H = 120; // ~7.5rem
+const SNAP_VELOCITY = 0.45; // px/ms
+const TAP_SLOP = 8; // px — treat as tap if movement under this
+
+function expandedHeight(): number {
+  if (typeof window === "undefined") return 480;
+  return Math.round(window.innerHeight * 0.7);
+}
 
 function matchupForTeam(team: string, games: SlateGame[]): string {
   const t = team.toUpperCase();
@@ -94,36 +110,134 @@ export function ParlaySheet({
   const show = generating || n > 0;
   const [entered, setEntered] = useState(false);
   const [expanded, setExpanded] = useState(generating);
+  const [maxH, setMaxH] = useState(expandedHeight);
+  const [height, setHeight] = useState(() =>
+    generating ? expandedHeight() : COLLAPSED_H
+  );
+  const [dragging, setDragging] = useState(false);
+
+  const dragRef = useRef<{
+    pointerId: number;
+    startY: number;
+    startH: number;
+    lastY: number;
+    lastT: number;
+    velocity: number;
+    moved: boolean;
+  } | null>(null);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setEntered(true));
     return () => cancelAnimationFrame(id);
   }, []);
 
+  useLayoutEffect(() => {
+    const sync = () => setMaxH(expandedHeight());
+    sync();
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+
   useEffect(() => {
     if (generating || loading) setExpanded(true);
   }, [generating, loading]);
 
+  useEffect(() => {
+    if (dragging) return;
+    setHeight(expanded ? maxH : COLLAPSED_H);
+  }, [expanded, maxH, dragging]);
+
+  const snapTo = useCallback((open: boolean) => {
+    setExpanded(open);
+    setHeight(open ? expandedHeight() : COLLAPSED_H);
+  }, []);
+
+  const onHandlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const now = performance.now();
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      startH: height,
+      lastY: e.clientY,
+      lastT: now,
+      velocity: 0,
+      moved: false,
+    };
+    setDragging(true);
+  };
+
+  const onHandlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const now = performance.now();
+    const dy = d.startY - e.clientY; // up = taller
+    if (Math.abs(e.clientY - d.startY) > TAP_SLOP) d.moved = true;
+    const next = Math.min(maxH, Math.max(COLLAPSED_H, d.startH + dy));
+    const dt = Math.max(1, now - d.lastT);
+    d.velocity = (d.lastY - e.clientY) / dt; // up positive
+    d.lastY = e.clientY;
+    d.lastT = now;
+    setHeight(next);
+  };
+
+  const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    setDragging(false);
+
+    if (!d.moved) {
+      snapTo(!expanded);
+      return;
+    }
+
+    const mid = (COLLAPSED_H + maxH) / 2;
+    if (d.velocity > SNAP_VELOCITY) {
+      snapTo(true);
+    } else if (d.velocity < -SNAP_VELOCITY) {
+      snapTo(false);
+    } else {
+      snapTo(height >= mid);
+    }
+  };
+
   if (!show) return null;
 
   const ready = !generating && !loading && n === maxLegs && draftMath?.valid;
+  const contentOpen = expanded || height > COLLAPSED_H + 24;
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 mx-auto max-w-md px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <div
-        className={`pointer-events-auto flex flex-col overflow-hidden rounded-t-3xl bg-[var(--surface)] shadow-[0_-8px_40px_rgba(0,0,0,0.12)] ring-1 ring-[var(--border)] transition-[height,transform,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-          expanded ? "h-[70vh]" : "h-[7.5rem]"
-        } ${
+        className={`pointer-events-auto flex flex-col overflow-hidden rounded-t-3xl bg-[var(--surface)] shadow-[0_-8px_40px_rgba(0,0,0,0.12)] ring-1 ring-[var(--border)] ${
           entered
             ? "translate-y-0 opacity-100"
             : "translate-y-[110%] opacity-0"
+        } ${
+          dragging
+            ? ""
+            : "transition-[height,transform,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
         }`}
+        style={{ height }}
       >
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="flex w-full shrink-0 flex-col items-center px-4 pt-3.5"
+        <div
+          role="button"
+          tabIndex={0}
           aria-expanded={expanded}
+          aria-label={expanded ? "Collapse slip" : "Expand slip"}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              snapTo(!expanded);
+            }
+          }}
+          onPointerDown={onHandlePointerDown}
+          onPointerMove={onHandlePointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          className="flex w-full shrink-0 touch-none cursor-grab flex-col items-center px-4 pt-3.5 active:cursor-grabbing"
         >
           <span className="mb-5 h-1 w-10 rounded-full bg-[var(--border-strong)]" />
           <div className="flex w-full items-center justify-between pb-2">
@@ -158,11 +272,11 @@ export function ParlaySheet({
               {loading || generating ? `0/${maxLegs}` : `${n}/${maxLegs}`}
             </span>
           </div>
-        </button>
+        </div>
 
-        {expanded && (
+        {contentOpen && (
           <>
-            <div className="sheet-scroll min-h-0 flex-1 overflow-y-auto px-4">
+            <div className="sheet-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-4">
               {loading ? (
                 <div className="flex flex-col items-center justify-center gap-3 py-10">
                   <ParlayButtonSpinner />
@@ -187,14 +301,14 @@ export function ParlaySheet({
                       enteredOdds !== null && !passesOddsCap(enteredOdds);
                     return (
                       <li key={key}>
-                      <PlayerLegCard
-                        player={pick.player}
-                        matchup={matchupForTeam(pick.team, games)}
-                        espnAthleteId={pick.espnAthleteId}
-                        last5={pick.last5}
-                        threshold={pick.threshold}
-                        stat={pick.stat}
-                        action={
+                        <PlayerLegCard
+                          player={pick.player}
+                          matchup={matchupForTeam(pick.team, games)}
+                          espnAthleteId={pick.espnAthleteId}
+                          last5={pick.last5}
+                          threshold={pick.threshold}
+                          stat={pick.stat}
+                          action={
                             <span className="rounded-full border border-[var(--border-strong)] bg-white px-3 py-1.5 text-[12px] font-medium text-[var(--text)]">
                               {formatMilestoneLabel(pick.stat, pick.threshold)}
                             </span>
