@@ -156,7 +156,6 @@ export default function Home() {
   const [oddsByLeg, setOddsByLeg] = useState<Record<string, string>>({});
   const [placeError, setPlaceError] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState({ index: 0, total: 0 });
-  const [showScanReport, setShowScanReport] = useState(false);
   const [showDiscoveryLog, setShowDiscoveryLog] = useState(false);
   const [clockMs, setClockMs] = useState(() => Date.now());
   const [booting, setBooting] = useState(true);
@@ -211,7 +210,6 @@ export default function Home() {
   }, [state?.pending]);
 
   function collapseScanSections() {
-    setShowScanReport(false);
     setShowDiscoveryLog(false);
   }
 
@@ -347,7 +345,7 @@ export default function Home() {
   const fetchStatus = useCallback(
     async (opts?: { silent?: boolean; date?: string; fresh?: boolean }) => {
       const silent = opts?.silent ?? false;
-      const date = opts?.date ?? viewDateRef.current;
+      const date = opts?.date;
       const fresh = opts?.fresh ?? false;
       let tick: ReturnType<typeof setInterval> | undefined;
       if (!silent) {
@@ -356,11 +354,27 @@ export default function Home() {
         }, 60);
       }
       try {
-        const qs = new URLSearchParams({ date });
+        const qs = new URLSearchParams();
+        // Omit date on boot so the server can advance past off-nights.
+        if (date) qs.set("date", date);
+        else qs.set("date", viewDateRef.current);
+        // Only auto-advance when caller didn't pin a calendar night.
+        if (!opts?.date) qs.set("advance", "1");
         if (fresh) qs.set("fresh", "1");
         const res = await fetch(`/api/status?${qs.toString()}`);
+        if (!res.ok) throw new Error(`status ${res.status}`);
         const data = await res.json();
+        if (!data?.slate) throw new Error("status missing slate");
         setState(data);
+        // Keep date strip in sync when server skipped an empty night.
+        if (
+          !opts?.date &&
+          typeof data.slate.date === "string" &&
+          data.slate.date !== viewDateRef.current
+        ) {
+          setViewDate(data.slate.date);
+          viewDateRef.current = data.slate.date;
+        }
       } catch (err) {
         console.error("status fetch failed", err);
         if (!silent) {
@@ -416,7 +430,7 @@ export default function Home() {
   useEffect(() => {
     if (!state?.pending?.length) return;
     const id = setInterval(() => {
-      void fetchStatus({ silent: true });
+      void fetchStatus({ silent: true, date: viewDateRef.current });
     }, 8_000);
     return () => clearInterval(id);
   }, [state?.pending, fetchStatus]);
@@ -645,7 +659,6 @@ export default function Home() {
     setOddsByLeg({});
     setPlaceError(null);
     setScanProgress({ index: 0, total: 0 });
-    setShowScanReport(false);
     setShowDiscoveryLog(false);
 
     if (suggestTop5) {
@@ -1442,17 +1455,10 @@ export default function Home() {
         </CollapsiblePanel>
       )}
 
-      {message && (
-        <CollapsiblePanel
-          title="Scan report"
-          open={showScanReport}
-          onToggle={() => setShowScanReport((v) => !v)}
-          className="mt-4"
-        >
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-[var(--text-muted)]">
-            {message}
-          </pre>
-        </CollapsiblePanel>
+      {message && appTab === "home" && (
+        <p className="mb-3 text-center text-sm text-[var(--text-muted)]">
+          {message}
+        </p>
       )}
         </>
       )}

@@ -44,7 +44,7 @@ export function SlateGamesList({ games, loading }: SlateGamesListProps) {
 
       {loading ? null : count === 0 ? (
         <p className="px-1 pb-1 text-xs text-[var(--text-muted)]">
-          Swipe the date strip for another night.
+          No NBA games this night — pick another date above.
         </p>
       ) : (
         <>
