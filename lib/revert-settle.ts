@@ -34,13 +34,13 @@ function settledToPending(settled: SettledParlay): PendingParlay {
   };
 }
 
-export async function revertLastSettle(): Promise<{
+export async function revertLastSettle(userId?: string | null): Promise<{
   ok: boolean;
   state: ParlayState;
   error?: string;
   message?: string;
 }> {
-  const state = await getState();
+  const state = await getState(userId);
 
   if (state.history.length === 0) {
     return { ok: false, state, error: "No settled parlay to revert." };
@@ -67,7 +67,7 @@ export async function revertLastSettle(): Promise<{
 
   const deferredUntil = getNextMorningSettleUnlock(pending.date);
   await setSettleDeferredUntil(pending.date, deferredUntil);
-  await setState(next);
+  await setState(next, userId);
 
   return {
     ok: true,

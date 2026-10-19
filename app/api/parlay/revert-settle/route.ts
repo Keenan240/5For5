@@ -1,9 +1,13 @@
+import { requireSessionUser } from "@/lib/auth-user";
 import { revertLastSettle } from "@/lib/revert-settle";
 import { getSettleLockStatus } from "@/lib/settle-lock";
 
 export async function POST() {
   try {
-    const result = await revertLastSettle();
+    const gate = await requireSessionUser();
+    if (!gate.ok) return gate.response;
+
+    const result = await revertLastSettle(gate.user.id);
     if (!result.ok) {
       return Response.json(
         { ok: false, error: result.error, state: result.state },

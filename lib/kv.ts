@@ -4,12 +4,19 @@ import path from "path";
 import { normalizeParlayState } from "./pending";
 import type { ParlayState } from "./types";
 
-const KEY = "parlay_state";
+/** Shared pre-account key (also used when auth is not configured). */
+const LEGACY_KEY = "parlay_state";
+const LEGACY_CLAIMED_KEY = "parlay_state:legacy_claimed";
 const DEFAULT_STATE: ParlayState = {
   bankroll: 0,
   pending: [],
   history: [],
 };
+
+function stateKey(userId?: string | null): string {
+  if (!userId || userId === "local") return LEGACY_KEY;
+  return `parlay:user:${userId}`;
+}
 
 const REDIS_RETRIES = 2;
 const REDIS_RETRY_BASE_MS = 60;
@@ -64,10 +71,6 @@ function redisRestConfig(): { url: string; token: string } | null {
   } catch {
     return null;
   }
-}
-
-function redisConfigured(): boolean {
-  return redisRestConfig() != null;
 }
 
 let redisClient: Redis | null | undefined;
@@ -193,12 +196,21 @@ export async function checkStorage(): Promise<{
   }
 }
 
-export async function getState(): Promise<ParlayState> {
+/**
+ * Load parlay state for a user.
+ * - Signed-in Google users → `parlay:user:{id}`
+ * - `local` / missing → legacy shared `parlay_state` (dev + pre-auth)
+ */
+export async function getState(userId?: string | null): Promise<ParlayState> {
   const redis = getRedis();
+  const key = stateKey(userId);
   if (redis) {
+    if (userId && userId !== "local") {
+      await maybeClaimLegacyState(userId);
+    }
     // Never invent empty state on Redis failure — that can wipe history on a later write.
     const state = await withRedisRetry("getState", () =>
-      redis.get<ParlayState>(KEY)
+      redis.get<ParlayState>(key)
     );
     return normalizeParlayState(state ?? { ...DEFAULT_STATE });
   }
@@ -208,14 +220,42 @@ export async function getState(): Promise<ParlayState> {
   return normalizeParlayState((await readLocal()) ?? { ...DEFAULT_STATE });
 }
 
-export async function setState(state: ParlayState): Promise<void> {
+export async function setState(
+  state: ParlayState,
+  userId?: string | null
+): Promise<void> {
   const redis = getRedis();
+  const key = stateKey(userId);
   if (redis) {
-    await withRedisRetry("setState", () => redis.set(KEY, state));
+    await withRedisRetry("setState", () => redis.set(key, state));
     return;
   }
   if (onVercel()) {
     throw new StorageNotConfiguredError();
   }
   await writeLocal(state);
+}
+
+/** First signed-in user inherits the old shared slip history once. */
+async function maybeClaimLegacyState(userId: string): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  try {
+    const userKey = stateKey(userId);
+    const existing = await redis.get<ParlayState>(userKey);
+    if (existing && (existing.history?.length || existing.pending?.length)) {
+      return;
+    }
+    const claimed = await redis.get<string>(LEGACY_CLAIMED_KEY);
+    if (claimed) return;
+    const legacy = await redis.get<ParlayState>(LEGACY_KEY);
+    if (!legacy) return;
+    const hasData =
+      (legacy.history?.length ?? 0) > 0 || (legacy.pending?.length ?? 0) > 0;
+    if (!hasData) return;
+    await redis.set(userKey, legacy);
+    await redis.set(LEGACY_CLAIMED_KEY, userId);
+  } catch (err) {
+    console.error("legacy claim skipped:", err);
+  }
 }

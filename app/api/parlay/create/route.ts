@@ -1,3 +1,4 @@
+import { getSessionUser, isGoogleAuthConfigured } from "@/lib/auth-user";
 import {
   parseCreateParlayRequest,
   runCreateParlay,
@@ -8,6 +9,10 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   try {
     const options = await parseCreateParlayRequest(request);
+    const sessionUser = await getSessionUser();
+    options.userId = isGoogleAuthConfigured()
+      ? (sessionUser?.id ?? null)
+      : "local";
     const result = await runCreateParlay(() => {}, undefined, options);
 
     if (result.error && !result.ok) {

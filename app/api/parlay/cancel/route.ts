@@ -1,7 +1,11 @@
+import { requireSessionUser } from "@/lib/auth-user";
 import { runCancelPendingParlay } from "@/lib/cancel-pending-parlay";
 
 export async function POST(request: Request) {
   try {
+    const gate = await requireSessionUser();
+    if (!gate.ok) return gate.response;
+
     let date: string | undefined;
     try {
       const body = await request.json();
@@ -10,7 +14,7 @@ export async function POST(request: Request) {
       /* empty body ok */
     }
 
-    const result = await runCancelPendingParlay(date);
+    const result = await runCancelPendingParlay(date, gate.user.id);
 
     if (!result.ok) {
       return Response.json(

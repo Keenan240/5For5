@@ -18,6 +18,8 @@ export type CreateParlayOptions = {
   h2hMode?: boolean;
   /** Eastern YYYY-MM-DD slate to scan (default: tonight). */
   date?: string;
+  /** Signed-in user id for loading personal state. */
+  userId?: string | null;
 };
 
 export async function parseCreateParlayRequest(
@@ -82,7 +84,7 @@ export async function runCreateParlay(
 
   let state;
   try {
-    state = await getState();
+    state = await getState(options.userId);
   } catch (err) {
     console.error("create getState failed:", err);
     state = { bankroll: 0, pending: [], history: [] };

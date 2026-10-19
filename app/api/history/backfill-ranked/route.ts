@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
+import { requireSessionUser } from "@/lib/auth-user";
 import { backfillHistoryRanked } from "@/lib/history";
 
 export async function POST(request: Request) {
   try {
+    const gate = await requireSessionUser();
+    if (!gate.ok) return gate.response;
+
     const body = await request.json();
     const index = Number(body?.index);
     if (!Number.isInteger(index)) {
@@ -12,7 +16,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await backfillHistoryRanked(index);
+    const result = await backfillHistoryRanked(index, gate.user.id);
     if (!result.ok) {
       return NextResponse.json(result, { status: 400 });
     }

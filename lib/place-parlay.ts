@@ -26,6 +26,8 @@ export type PlaceParlayInput = {
   rankedPool?: RankedPoolPick[];
   /** User-chosen $2 / $5 / $10; defaults to risk recommendation. */
   stake?: StakeTier;
+  /** Signed-in user id (or `local` when auth is off). */
+  userId?: string | null;
 };
 
 export type PlaceParlayResult = {
@@ -69,7 +71,7 @@ export function buildPendingFromLegs(
 export async function runPlaceParlay(
   input: PlaceParlayInput
 ): Promise<PlaceParlayResult> {
-  let state = await getState();
+  let state = await getState(input.userId);
 
   if (hasSlipForDate(state, input.date)) {
     const error =
@@ -119,7 +121,7 @@ export async function runPlaceParlay(
     bankroll: roundMoney(state.bankroll - pending.stake),
     pending: [...pendingList, pending],
   };
-  await setState(state);
+  await setState(state, input.userId);
 
   const legLines = pending.legs.map(
     (l) =>

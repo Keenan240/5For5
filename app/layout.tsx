@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Poppins } from "next/font/google";
+import { Providers } from "@/components/providers";
 import "./globals.css";
 
 const poppins = Poppins({
@@ -47,7 +48,9 @@ export default function RootLayout({
           content="black-translucent"
         />
       </head>
-      <body className="min-h-screen font-sans antialiased">{children}</body>
+      <body className="min-h-screen font-sans antialiased">
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

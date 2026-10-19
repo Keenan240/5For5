@@ -1,3 +1,4 @@
+import { getSessionUser, isGoogleAuthConfigured } from "@/lib/auth-user";
 import { addDaysYmd } from "@/lib/dates";
 import { reconcileBankroll } from "@/lib/history";
 import { getState, setState, storageMode } from "@/lib/kv";
@@ -5,6 +6,7 @@ import { enrichPendingEspnIds } from "@/lib/pending";
 import { getSettleLockStatus } from "@/lib/settle-lock";
 import { getSlateForDate, getTodayEastern } from "@/lib/tonight";
 import type { ParlayState } from "@/lib/types";
+import { getUser } from "@/lib/users";
 
 const SETTLE_LOCK_BUDGET_MS = 3_000;
 const ENRICH_BUDGET_MS = 1_500;
@@ -44,14 +46,34 @@ async function withBudget<T>(
   ]);
 }
 
-async function safeSetState(state: ParlayState): Promise<boolean> {
+async function safeSetState(
+  state: ParlayState,
+  userId?: string | null
+): Promise<boolean> {
   try {
-    await setState(state);
+    await setState(state, userId);
     return true;
   } catch (err) {
     console.error("status setState skipped:", err);
     return false;
   }
+}
+
+async function resolveUserId(): Promise<{
+  userId: string | null;
+  signedIn: boolean;
+  authEnabled: boolean;
+}> {
+  const authEnabled = isGoogleAuthConfigured();
+  if (!authEnabled) {
+    return { userId: "local", signedIn: false, authEnabled: false };
+  }
+  const user = await getSessionUser();
+  return {
+    userId: user?.id ?? null,
+    signedIn: Boolean(user?.id),
+    authEnabled: true,
+  };
 }
 
 /** Prefer a nearby night that actually has games when the requested date is empty. */
@@ -112,6 +134,8 @@ export async function GET(request: Request) {
   const focusDate = date ?? getTodayEastern();
   const allowAdvance = url.searchParams.get("advance") === "1";
 
+  const { userId, signedIn, authEnabled } = await resolveUserId();
+
   let state: ParlayState = {
     bankroll: 0,
     pending: [],
@@ -120,33 +144,36 @@ export async function GET(request: Request) {
   let storageOk = storageMode() !== "none";
   let storageDetail: string | undefined;
 
-  try {
-    const loaded = await withBudget(
-      getState().then(async (s) => {
-        const reconciled = reconcileBankroll(s);
-        if (reconciled.bankroll !== s.bankroll) {
-          await safeSetState(reconciled);
-          return reconciled;
-        }
-        return s;
-      }),
-      GET_STATE_BUDGET_MS,
-      null
-    );
-    if (loaded) {
-      state = loaded;
-    } else {
+  // Signed-out visitors still get the slate; personal data stays empty.
+  if (userId) {
+    try {
+      const loaded = await withBudget(
+        getState(userId).then(async (s) => {
+          const reconciled = reconcileBankroll(s);
+          if (reconciled.bankroll !== s.bankroll) {
+            await safeSetState(reconciled, userId);
+            return reconciled;
+          }
+          return s;
+        }),
+        GET_STATE_BUDGET_MS,
+        null
+      );
+      if (loaded) {
+        state = loaded;
+      } else {
+        storageOk = false;
+        storageDetail =
+          "Database slow/unreachable. Check Upstash Redis in Vercel → Storage.";
+      }
+    } catch (err) {
+      console.error("status getState failed:", err);
       storageOk = false;
       storageDetail =
-        "Database slow/unreachable. Check Upstash Redis in Vercel → Storage.";
+        err instanceof Error
+          ? err.message
+          : "Database unreachable. Check Upstash Redis in Vercel → Storage.";
     }
-  } catch (err) {
-    console.error("status getState failed:", err);
-    storageOk = false;
-    storageDetail =
-      err instanceof Error
-        ? err.message
-        : "Database unreachable. Check Upstash Redis in Vercel → Storage.";
   }
 
   let slate;
@@ -183,12 +210,34 @@ export async function GET(request: Request) {
       ENRICH_BUDGET_MS,
       { state, changed: false as const }
     );
-    if (enriched.changed) {
-      await safeSetState(enriched.state);
+    if (enriched.changed && userId) {
+      await safeSetState(enriched.state, userId);
       state = enriched.state;
     }
   } catch (err) {
     console.error("status enrich skipped:", err);
+  }
+
+  let account: {
+    signedIn: boolean;
+    authEnabled: boolean;
+    id?: string;
+    name?: string;
+    email?: string;
+    image?: string;
+    handle?: string;
+  } = { signedIn, authEnabled };
+  if (userId && userId !== "local") {
+    const profile = await getUser(userId).catch(() => null);
+    account = {
+      signedIn: true,
+      authEnabled,
+      id: userId,
+      name: profile?.name,
+      email: profile?.email,
+      image: profile?.image,
+      handle: profile?.handle,
+    };
   }
 
   let settleLocks: Record<string, ReturnType<typeof serializeLock>> = {};
@@ -236,6 +285,7 @@ export async function GET(request: Request) {
     storage: storageMode(),
     storageOk,
     storageDetail: storageOk ? undefined : storageDetail,
+    account,
     qualifiedCount: null,
     sliderMax: 8,
     slate: {

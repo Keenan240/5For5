@@ -1,9 +1,13 @@
+import { requireSessionUser } from "@/lib/auth-user";
 import { isStakeTier } from "@/lib/odds";
 import { runPlaceParlay } from "@/lib/place-parlay";
 import type { ParlayLeg, RankedPoolPick } from "@/lib/types";
 
 export async function POST(request: Request) {
   try {
+    const gate = await requireSessionUser();
+    if (!gate.ok) return gate.response;
+
     const body = await request.json();
     const date = String(body.date ?? "");
     const legs = body.legs as ParlayLeg[] | undefined;
@@ -18,7 +22,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await runPlaceParlay({ date, legs, rankedPool, stake });
+    const result = await runPlaceParlay({
+      date,
+      legs,
+      rankedPool,
+      stake,
+      userId: gate.user.id,
+    });
 
     if (!result.ok) {
       return Response.json(

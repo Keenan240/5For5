@@ -1,3 +1,4 @@
+import { getSessionUser, isGoogleAuthConfigured } from "@/lib/auth-user";
 import {
   parseCreateParlayRequest,
   runCreateParlay,
@@ -13,6 +14,12 @@ function sseLine(event: CreateProgressEvent): string {
 
 export async function POST(request: Request) {
   const options = await parseCreateParlayRequest(request);
+  const sessionUser = await getSessionUser();
+  if (isGoogleAuthConfigured()) {
+    options.userId = sessionUser?.id ?? null;
+  } else {
+    options.userId = "local";
+  }
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({

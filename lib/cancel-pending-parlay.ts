@@ -12,9 +12,10 @@ export type CancelPendingParlayResult = {
 };
 
 export async function runCancelPendingParlay(
-  date?: string
+  date?: string,
+  userId?: string | null
 ): Promise<CancelPendingParlayResult> {
-  const state = await getState();
+  const state = await getState(userId);
   const list = normalizePendingList(state.pending);
 
   if (list.length === 0) {
@@ -45,7 +46,7 @@ export async function runCancelPendingParlay(
   };
 
   await clearSettleLockForDate(pending.date);
-  await setState(newState);
+  await setState(newState, userId);
 
   return {
     ok: true,

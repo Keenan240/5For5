@@ -1,10 +1,17 @@
+import { requireSessionUser } from "@/lib/auth-user";
 import { getState, setState } from "@/lib/kv";
+import { syncLeaderboardForUser } from "@/lib/leaderboard";
 import { getSettleLockStatus, clearSettleLockForDate } from "@/lib/settle-lock";
 import { settlePending } from "@/lib/settle";
+import { getUser } from "@/lib/users";
 
 export async function POST(request: Request) {
   try {
-    const state = await getState();
+    const gate = await requireSessionUser();
+    if (!gate.ok) return gate.response;
+    const userId = gate.user.id;
+
+    const state = await getState(userId);
     let date: string | undefined;
     try {
       const body = await request.json();
@@ -61,7 +68,16 @@ export async function POST(request: Request) {
 
     const { state: newState, summary } = await settlePending(state, target.date);
     await clearSettleLockForDate(target.date);
-    await setState(newState);
+    await setState(newState, userId);
+
+    if (userId !== "local") {
+      const profile = await getUser(userId);
+      if (profile) {
+        void syncLeaderboardForUser(profile, newState).catch((err) =>
+          console.error("leaderboard sync failed:", err)
+        );
+      }
+    }
 
     return Response.json({
       message: summary,

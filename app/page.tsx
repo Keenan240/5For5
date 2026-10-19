@@ -38,7 +38,9 @@ import {
   rankedToLeg,
 } from "@/lib/parlay-selection";
 import { PARLAY_LEG_COUNT } from "@/lib/scoring";
+import { AuthButton } from "@/components/auth-button";
 import { BootLoader } from "@/components/boot-loader";
+import { LeaderboardView } from "@/components/leaderboard-view";
 import {
   ParlayButtonSpinner,
   ParlayFlowStatus,
@@ -106,6 +108,15 @@ type StatusResponse = ParlayState & {
   storage?: "redis" | "local" | "none";
   storageOk?: boolean;
   storageDetail?: string;
+  account?: {
+    signedIn: boolean;
+    authEnabled: boolean;
+    id?: string;
+    name?: string;
+    email?: string;
+    image?: string;
+    handle?: string;
+  };
 };
 
 type ProgressLine = {
@@ -1008,11 +1019,23 @@ export default function Home() {
           : "pb-28"
       } ${booting ? "opacity-0" : "opacity-100"}`}
     >
-      <header className="mb-5">
+      <header className="mb-5 flex items-center justify-between gap-3">
         <h1 className="text-lg font-semibold tracking-tight text-[var(--text)]">
-          {appTab === "home" ? "5For5" : "Results"}
+          {appTab === "home"
+            ? "5For5"
+            : appTab === "community"
+              ? "Community"
+              : "Results"}
         </h1>
+        <AuthButton authEnabled={state?.account?.authEnabled !== false} />
       </header>
+
+      {appTab === "community" && (
+        <LeaderboardView
+          signedIn={Boolean(state?.account?.signedIn)}
+          authEnabled={state?.account?.authEnabled !== false}
+        />
+      )}
 
       {appTab === "results" && (
         <ResultsView
@@ -1154,6 +1177,13 @@ export default function Home() {
             {state.storageDetail ??
               "Reconnect Upstash Redis in Vercel → Storage, then Redeploy."}
           </p>
+        </div>
+      )}
+
+      {state?.account?.authEnabled && !state.account.signedIn && (
+        <div className="mb-3 rounded-2xl bg-[var(--surface)] px-3 py-2.5 text-xs text-[var(--text-muted)]">
+          Sign in with Google to save parlays to your account and join the
+          community board.
         </div>
       )}
 
