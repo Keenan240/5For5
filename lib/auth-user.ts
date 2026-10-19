@@ -1,5 +1,7 @@
 import { auth, isGoogleAuthConfigured } from "@/auth";
 
+export { isGoogleAuthConfigured };
+
 export type SessionUser = {
   id: string;
   name?: string | null;
@@ -43,5 +45,3 @@ export async function requireSessionUser(): Promise<
   }
   return { ok: true, user };
 }
-
-export { isGoogleAuthConfigured };
