@@ -362,10 +362,14 @@ export default function Home() {
         if (!opts?.date) qs.set("advance", "1");
         if (fresh) qs.set("fresh", "1");
         const res = await fetch(`/api/status?${qs.toString()}`);
-        if (!res.ok) throw new Error(`status ${res.status}`);
-        const data = await res.json();
-        if (!data?.slate) throw new Error("status missing slate");
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.slate) {
+          throw new Error(
+            data?.error || `status ${res.status || "failed"}`
+          );
+        }
         setState(data);
+        setMessage(null);
         // Keep date strip in sync when server skipped an empty night.
         if (
           !opts?.date &&
@@ -424,7 +428,7 @@ export default function Home() {
           }
         : prev
     );
-    await fetchStatus({ date: ymd, silent: true, fresh: true });
+    await fetchStatus({ date: ymd, silent: false, fresh: true });
   }
 
   useEffect(() => {

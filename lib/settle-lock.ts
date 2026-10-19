@@ -148,7 +148,10 @@ export async function getSettleLockStatus(
   const [legsStats, deferredUntil, slate] = await Promise.all([
     resolveLegsStats(pending),
     getSettleDeferredUntil(pending.date),
-    getSlateForDate(pending.date, { fresh: isTodaysSlate }),
+    getSlateForDate(pending.date, {
+      fresh: isTodaysSlate,
+      gamesOnly: true,
+    }),
   ]);
 
   const statsReady = legsStats.length > 0 && legsStats.every((l) => l.ready);

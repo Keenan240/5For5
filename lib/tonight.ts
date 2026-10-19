@@ -81,11 +81,18 @@ function cacheTtlMs(slate: TonightSlate): number {
   return slate.games.length === 0 ? EMPTY_CACHE_MS : CACHE_MS;
 }
 
+export type GetSlateOptions = {
+  fresh?: boolean;
+  /** Scoreboard only — skip roster hydration (status/UI). */
+  gamesOnly?: boolean;
+};
+
 export async function getSlateForDate(
   date: string,
-  opts?: { fresh?: boolean }
+  opts?: GetSlateOptions
 ): Promise<TonightSlate> {
-  const cacheKey = `${date}-v8`;
+  const gamesOnly = opts?.gamesOnly === true;
+  const cacheKey = `${date}-v9${gamesOnly ? "-g" : ""}`;
   const hit = slateCache.get(cacheKey);
   const age = hit ? Date.now() - hit.at : Infinity;
   const ttl = hit ? cacheTtlMs(hit.slate) : 0;
@@ -94,35 +101,32 @@ export async function getSlateForDate(
     if (!opts?.fresh || age < 30_000) {
       return hit.slate;
     }
-    const refreshed = await refreshGameStatuses(hit.slate);
+    const refreshed = await refreshGameStatuses(hit.slate, gamesOnly);
     slateCache.set(cacheKey, { slate: refreshed, at: Date.now() });
     return refreshed;
   }
 
-  // BDL → ESPN scoreboard → NBA stats. Never trust a single empty source.
-  let slate: TonightSlate | null = null;
+  // ESPN first (public + fast), then BDL. NBA stats is slow/flaky from
+  // serverless — only use it when we need full rosters (discovery), not status.
+  let slate: TonightSlate | null = await getSlateFromEspn(date, gamesOnly);
 
-  if (hasBdlKey()) {
-    slate = await getSlateFromBdl(date);
-  }
-
-  if (!slate || slate.games.length === 0) {
-    const espnSlate = await getSlateFromEspn(date);
-    if (espnSlate.games.length > 0) {
-      slate = espnSlate;
+  if ((!slate || slate.games.length === 0) && hasBdlKey()) {
+    const bdlSlate = await getSlateFromBdl(date, gamesOnly);
+    if (bdlSlate && bdlSlate.games.length > 0) {
+      slate = bdlSlate;
     } else if (!slate) {
-      slate = espnSlate;
+      slate = bdlSlate;
     }
   }
 
-  if (!slate || slate.games.length === 0) {
-    const nbaSlate = await getSlateFromNba(date);
+  if (!gamesOnly && (!slate || slate.games.length === 0)) {
+    const nbaSlate = await getSlateFromNba(date, false);
     if (nbaSlate.games.length > 0 || !slate) {
       slate = nbaSlate;
     }
   }
 
-  const finalSlate = slate ?? emptySlate(date, "nba");
+  const finalSlate = slate ?? emptySlate(date, "espn");
   slateCache.set(cacheKey, { slate: finalSlate, at: Date.now() });
   return finalSlate;
 }
@@ -132,7 +136,10 @@ export async function getTonightSlate(): Promise<TonightSlate> {
 }
 
 /** Games from BallDontLie; rosters via ESPN/NBA. null = request failed. */
-async function getSlateFromBdl(date: string): Promise<TonightSlate | null> {
+async function getSlateFromBdl(
+  date: string,
+  gamesOnly = false
+): Promise<TonightSlate | null> {
   // Prefer date-only (avoids wrong seasons[] filtering out opening night).
   // If empty, retry with season candidates derived from the calendar date.
   let gamesResult = await fetchJson<{ data: BdlGame[] }>(
@@ -173,6 +180,17 @@ async function getSlateFromBdl(date: string): Promise<TonightSlate | null> {
     postseason: g.postseason,
   }));
 
+  if (gamesOnly) {
+    return {
+      date,
+      games: slateGames,
+      players: [],
+      teamIds: [],
+      source: "balldontlie",
+      rosterSource: "none",
+    };
+  }
+
   const abbrevs = uniqueAbbrevs(slateGames);
   const { players, rosterSource, teamIds } = await resolveRostersForTeams(abbrevs);
 
@@ -197,7 +215,10 @@ function normalizeBdlGameDate(g: BdlGame): string {
   return raw;
 }
 
-async function getSlateFromEspn(date: string): Promise<TonightSlate> {
+async function getSlateFromEspn(
+  date: string,
+  gamesOnly = false
+): Promise<TonightSlate> {
   const compact = date.replace(/-/g, "");
   const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${compact}`;
   const result = await fetchJson<{
@@ -251,6 +272,17 @@ async function getSlateFromEspn(date: string): Promise<TonightSlate> {
     return emptySlate(date, "espn");
   }
 
+  if (gamesOnly) {
+    return {
+      date,
+      games,
+      players: [],
+      teamIds: [],
+      source: "espn",
+      rosterSource: "none",
+    };
+  }
+
   const abbrevs = uniqueAbbrevs(games);
   const { players, rosterSource, teamIds } = await resolveRostersForTeams(abbrevs);
 
@@ -264,17 +296,29 @@ async function getSlateFromEspn(date: string): Promise<TonightSlate> {
   };
 }
 
-async function getSlateFromNba(date: string): Promise<TonightSlate> {
+async function getSlateFromNba(
+  date: string,
+  gamesOnly = false
+): Promise<TonightSlate> {
   const scoreboard = await fetchNbaScoreboard(date);
   const abbrevs =
     scoreboard.games.length > 0
       ? uniqueAbbrevs(scoreboard.games)
       : [];
 
+  if (gamesOnly || abbrevs.length === 0) {
+    return {
+      date,
+      games: scoreboard.games,
+      players: [],
+      teamIds: scoreboard.teamIds,
+      source: "nba",
+      rosterSource: "none",
+    };
+  }
+
   const { players, rosterSource, teamIds } =
-    abbrevs.length > 0
-      ? await resolveRostersForTeams(abbrevs)
-      : { players: [], rosterSource: "none" as const, teamIds: [] };
+    await resolveRostersForTeams(abbrevs);
 
   return {
     date,
@@ -392,17 +436,32 @@ async function fetchRosterViaCommonAllPlayers(
 }
 
 /** Update only game status labels; keep cached rosters. */
-async function refreshGameStatuses(slate: TonightSlate): Promise<TonightSlate> {
-  const espn = await getSlateFromEspn(slate.date);
+async function refreshGameStatuses(
+  slate: TonightSlate,
+  gamesOnly = false
+): Promise<TonightSlate> {
+  const espn = await getSlateFromEspn(slate.date, true);
   if (espn.games.length > 0) {
     return {
       ...slate,
       games: espn.games,
       source: "espn",
       // keep existing rosters if already loaded
-      players: slate.players.length ? slate.players : espn.players,
-      rosterSource: slate.players.length ? slate.rosterSource : espn.rosterSource,
-      teamIds: slate.teamIds.length ? slate.teamIds : espn.teamIds,
+      players: gamesOnly
+        ? []
+        : slate.players.length
+          ? slate.players
+          : espn.players,
+      rosterSource: gamesOnly
+        ? "none"
+        : slate.players.length
+          ? slate.rosterSource
+          : espn.rosterSource,
+      teamIds: gamesOnly
+        ? []
+        : slate.teamIds.length
+          ? slate.teamIds
+          : espn.teamIds,
     };
   }
 

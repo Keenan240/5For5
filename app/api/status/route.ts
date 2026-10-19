@@ -43,12 +43,15 @@ async function resolveSlate(
   fresh: boolean,
   allowAdvance: boolean
 ) {
-  const slate = await getSlateForDate(requested, { fresh });
+  const slate = await getSlateForDate(requested, {
+    fresh,
+    gamesOnly: true,
+  });
   if (slate.games.length > 0 || !allowAdvance) return slate;
 
   for (let i = 1; i <= 4; i++) {
     const next = addDaysYmd(requested, i);
-    const candidate = await getSlateForDate(next, { fresh: false });
+    const candidate = await getSlateForDate(next, { gamesOnly: true });
     if (candidate.games.length > 0) return candidate;
   }
   return slate;
