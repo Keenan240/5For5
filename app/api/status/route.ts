@@ -8,6 +8,8 @@ import type { ParlayState } from "@/lib/types";
 
 const SETTLE_LOCK_BUDGET_MS = 3_000;
 const ENRICH_BUDGET_MS = 1_500;
+const GET_STATE_BUDGET_MS = 2_500;
+const SLATE_BUDGET_MS = 8_000;
 
 function serializeLock(
   settleLock: Awaited<ReturnType<typeof getSettleLockStatus>>
@@ -64,12 +66,13 @@ async function resolveSlate(
   });
   if (slate.games.length > 0 || !allowAdvance) return slate;
 
-  for (let i = 1; i <= 4; i++) {
-    const next = addDaysYmd(requested, i);
-    const candidate = await getSlateForDate(next, { gamesOnly: true });
-    if (candidate.games.length > 0) return candidate;
-  }
-  return slate;
+  // Parallel lookup — sequential ESPN calls were stalling boot on empty nights.
+  const candidates = await Promise.all(
+    [1, 2, 3, 4].map((i) =>
+      getSlateForDate(addDaysYmd(requested, i), { gamesOnly: true })
+    )
+  );
+  return candidates.find((c) => c.games.length > 0) ?? slate;
 }
 
 function emptyPayload(
@@ -118,11 +121,24 @@ export async function GET(request: Request) {
   let storageDetail: string | undefined;
 
   try {
-    state = await getState();
-    const reconciled = reconcileBankroll(state);
-    if (reconciled.bankroll !== state.bankroll) {
-      await safeSetState(reconciled);
-      state = reconciled;
+    const loaded = await withBudget(
+      getState().then(async (s) => {
+        const reconciled = reconcileBankroll(s);
+        if (reconciled.bankroll !== s.bankroll) {
+          await safeSetState(reconciled);
+          return reconciled;
+        }
+        return s;
+      }),
+      GET_STATE_BUDGET_MS,
+      null
+    );
+    if (loaded) {
+      state = loaded;
+    } else {
+      storageOk = false;
+      storageDetail =
+        "Database slow/unreachable. Check Upstash Redis in Vercel → Storage.";
     }
   } catch (err) {
     console.error("status getState failed:", err);
@@ -135,7 +151,20 @@ export async function GET(request: Request) {
 
   let slate;
   try {
-    slate = await resolveSlate(focusDate, fresh, allowAdvance);
+    const resolved = await withBudget(
+      resolveSlate(focusDate, fresh, allowAdvance),
+      SLATE_BUDGET_MS,
+      null
+    );
+    if (!resolved) {
+      return Response.json(
+        emptyPayload(focusDate, state, "slate_timeout", {
+          ok: storageOk,
+          detail: storageDetail,
+        })
+      );
+    }
+    slate = resolved;
   } catch (err) {
     console.error("status slate failed:", err);
     return Response.json(

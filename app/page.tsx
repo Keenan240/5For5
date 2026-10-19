@@ -356,6 +356,8 @@ export default function Home() {
           setLoadProgress((p) => (p >= 88 ? p : p + 4));
         }, 60);
       }
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), 12_000);
       try {
         const qs = new URLSearchParams();
         // Omit date on boot so the server can advance past off-nights.
@@ -364,7 +366,9 @@ export default function Home() {
         // Only auto-advance when caller didn't pin a calendar night.
         if (!opts?.date) qs.set("advance", "1");
         if (fresh) qs.set("fresh", "1");
-        const res = await fetch(`/api/status?${qs.toString()}`);
+        const res = await fetch(`/api/status?${qs.toString()}`, {
+          signal: controller.signal,
+        });
         const data = await res.json().catch(() => null);
         if (!data?.slate) {
           throw new Error(
@@ -391,6 +395,7 @@ export default function Home() {
           setMessage("Couldn't load slate — check the connection and refresh.");
         }
       } finally {
+        clearTimeout(abortTimer);
         if (tick) clearInterval(tick);
         setSlateLoading(false);
         if (!silent) {

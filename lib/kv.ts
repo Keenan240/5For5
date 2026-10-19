@@ -11,8 +11,10 @@ const DEFAULT_STATE: ParlayState = {
   history: [],
 };
 
-const REDIS_RETRIES = 3;
-const REDIS_RETRY_BASE_MS = 80;
+const REDIS_RETRIES = 2;
+const REDIS_RETRY_BASE_MS = 60;
+/** Hard cap per Redis attempt — bad REDIS_URL must not stall boot. */
+const REDIS_ATTEMPT_TIMEOUT_MS = 2_000;
 
 function localPath(): string {
   return path.join(process.cwd(), ".data", "parlay_state.json");
@@ -79,12 +81,31 @@ export function getRedis(): Redis | null {
   }
   redisClient = new Redis({
     ...config,
-    retry: {
-      retries: REDIS_RETRIES,
-      backoff: (n) => Math.min(REDIS_RETRY_BASE_MS * 2 ** n, 800),
-    },
+    // We apply our own short timeouts + retries; disable SDK stacking.
+    retry: { retries: 0 },
   });
   return redisClient;
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${ms}ms`)),
+          ms
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function onVercel(): boolean {
@@ -124,13 +145,13 @@ async function withRedisRetry<T>(label: string, fn: () => Promise<T>): Promise<T
   let lastErr: unknown;
   for (let attempt = 0; attempt < REDIS_RETRIES; attempt++) {
     try {
-      return await fn();
+      return await withTimeout(fn(), REDIS_ATTEMPT_TIMEOUT_MS, label);
     } catch (err) {
       lastErr = err;
       console.error(`Redis ${label} attempt ${attempt + 1} failed:`, err);
       if (attempt < REDIS_RETRIES - 1) {
         await new Promise((r) =>
-          setTimeout(r, Math.min(REDIS_RETRY_BASE_MS * 2 ** attempt, 800))
+          setTimeout(r, Math.min(REDIS_RETRY_BASE_MS * 2 ** attempt, 400))
         );
       }
     }
