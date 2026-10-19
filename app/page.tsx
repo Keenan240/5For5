@@ -39,6 +39,7 @@ import {
 } from "@/lib/parlay-selection";
 import { PARLAY_LEG_COUNT } from "@/lib/scoring";
 import { AuthButton } from "@/components/auth-button";
+import { AuthLanding } from "@/components/auth-landing";
 import { BootLoader } from "@/components/boot-loader";
 import { LeaderboardView } from "@/components/leaderboard-view";
 import {
@@ -1005,6 +1006,22 @@ export default function Home() {
     !viewHasSlip &&
     loading !== "place";
 
+  const needsAuthGate =
+    !booting &&
+    Boolean(state?.account?.authEnabled) &&
+    !state?.account?.signedIn;
+
+  if (needsAuthGate) {
+    return (
+      <>
+        {(booting || bootFading) && (
+          <BootLoader progress={loadProgress} fadingOut={bootFading} />
+        )}
+        <AuthLanding />
+      </>
+    );
+  }
+
   return (
     <>
       {(booting || bootFading) && (
@@ -1177,13 +1194,6 @@ export default function Home() {
             {state.storageDetail ??
               "Reconnect Upstash Redis in Vercel → Storage, then Redeploy."}
           </p>
-        </div>
-      )}
-
-      {state?.account?.authEnabled && !state.account.signedIn && (
-        <div className="mb-3 rounded-2xl bg-[var(--surface)] px-3 py-2.5 text-xs text-[var(--text-muted)]">
-          Sign in with Google to save parlays to your account and join the
-          community board.
         </div>
       )}
 

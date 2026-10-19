@@ -33,6 +33,40 @@ body {
   font-family: var(--font-sans);
 }
 
+.auth-landing {
+  background:
+    radial-gradient(120% 80% at 50% -10%, #ffffff 0%, transparent 55%),
+    linear-gradient(180deg, #ececf0 0%, var(--bg) 45%, #e8eee9 100%);
+}
+
+.auth-landing-glow {
+  background:
+    radial-gradient(ellipse 70% 40% at 50% 100%, rgba(22, 163, 74, 0.1), transparent 70%);
+}
+
+.auth-landing-enter {
+  animation: auth-landing-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.auth-landing-cta {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.auth-landing-cta:active {
+  transform: scale(0.98);
+}
+
+@keyframes auth-landing-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .date-strip-scroll::-webkit-scrollbar,
 .sheet-scroll::-webkit-scrollbar {
   display: none;
