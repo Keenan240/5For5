@@ -80,7 +80,17 @@ export function SlateBrowser({
 
   const gamesWithPlayers = useMemo(() => {
     if (!openStat) return [];
-    const th = activeThreshold(openStat);
+    const ladder = LADDERS[openStat];
+    const present = new Set(
+      candidates.filter((c) => c.stat === openStat).map((c) => c.threshold)
+    );
+    const opts = ladder.filter((t) => present.has(t));
+    const thresholds = opts.length > 0 ? opts : ladder.slice(0, 5);
+    const chosen = thresholdByStat[openStat];
+    const th =
+      chosen != null && thresholds.includes(chosen)
+        ? chosen
+        : (thresholds[0] ?? ladder[0]);
     const pool = candidates.filter(
       (c) => c.stat === openStat && c.threshold === th
     );

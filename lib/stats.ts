@@ -9,7 +9,6 @@ import {
 import {
   findEspnGameOnSlate,
   getEspnGameLogs,
-  getLast5GamesFromEspn,
   getLatestGameStatFromEspn,
 } from "./espn";
 import { nbaSeasonYear } from "./bdl-client";

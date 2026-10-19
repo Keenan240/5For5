@@ -6,16 +6,22 @@ import { setSettleDeferredUntil } from "./settle-timing";
 import type { ParlayState, PendingParlay, SettledParlay } from "./types";
 
 function settledToPending(settled: SettledParlay): PendingParlay {
-  const legs = settled.legs.map(
-    ({ actualValue: _v, hit: _h, ...rest }) => rest
-  );
+  const legs = settled.legs.map((leg) => {
+    const { actualValue, hit, ...rest } = leg;
+    void actualValue;
+    void hit;
+    return rest;
+  });
 
   const rankedPool =
     settled.rankedPool?.length
       ? settled.rankedPool
-      : settled.rankedResults?.map(
-          ({ actualValue: _v, hit: _h, ...rest }) => rest
-        );
+      : settled.rankedResults?.map((row) => {
+          const { actualValue, hit, ...rest } = row;
+          void actualValue;
+          void hit;
+          return rest;
+        });
 
   return {
     date: settled.date,

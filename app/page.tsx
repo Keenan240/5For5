@@ -20,7 +20,6 @@ import { formatMilestoneLabel } from "@/lib/milestones";
 import {
   calcPayout,
   combineParlayOdds,
-  formatAmerican,
   parseAmericanOdds,
   passesOddsCap,
   stakeTierForRisk,
@@ -118,7 +117,6 @@ export default function Home() {
   const [state, setState] = useState<StatusResponse | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [historyVisibleCount, setHistoryVisibleCount] = useState(3);
   const [historyExpandedId, setHistoryExpandedId] = useState<string | null>(
     null
@@ -275,7 +273,7 @@ export default function Home() {
           );
         }
         // Selecting this leg: drop any other threshold for same player+stat.
-        let next = prev.map((p) =>
+        const next = prev.map((p) =>
           `${p.player}|${p.stat}` === ps && legKey(p) !== key
             ? { ...p, selected: false }
             : p
@@ -870,7 +868,6 @@ export default function Home() {
     if (!confirm("Clear all history and reset tracker state?")) return;
     await fetch("/api/reset", { method: "POST" });
     setMessage(null);
-    setHistoryOpen(false);
     setHistoryVisibleCount(3);
     setStatsReady(false);
     setCandidatePool([]);
@@ -922,24 +919,11 @@ export default function Home() {
         return;
       }
       if (data.state.history.length === 0) {
-        setHistoryOpen(false);
         setHistoryVisibleCount(3);
       }
       await fetchStatus();
     } finally {
       setLoading(null);
-    }
-  }
-
-  function toggleHistoryPanel() {
-    if (historyOpen) {
-      setHistoryOpen(false);
-      setHistoryVisibleCount(3);
-      setHistoryExpandedId(null);
-    } else {
-      setHistoryOpen(true);
-      setHistoryVisibleCount(3);
-      window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
 
@@ -1119,12 +1103,10 @@ export default function Home() {
           historyNewestFirst.length > 0
             ? () => {
                 setAppTab("results");
-                setHistoryOpen(true);
                 setHistoryVisibleCount(Math.max(historyVisibleCount, 5));
               }
             : undefined
         }
-        historyOpen={false}
       />
 
       <DateStrip

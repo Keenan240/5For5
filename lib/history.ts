@@ -56,7 +56,12 @@ export async function backfillHistoryRanked(
     const rankedPool =
       entry.rankedPool?.length
         ? entry.rankedPool
-        : rankedResults.map(({ actualValue: _v, hit: _h, ...pick }) => pick);
+        : rankedResults.map((row) => {
+            const { actualValue, hit, ...pick } = row;
+            void actualValue;
+            void hit;
+            return pick;
+          });
     const history = state.history.map((h, i) =>
       i === index ? { ...h, rankedResults, rankedPool } : h
     );

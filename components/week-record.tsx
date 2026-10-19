@@ -6,14 +6,12 @@ type WeekRecordProps = {
   days: WeekDayResult[];
   lifetime?: { wins: number; losses: number } | null;
   onOpenHistory?: () => void;
-  historyOpen?: boolean;
 };
 
 export function WeekRecord({
   days,
   lifetime,
   onOpenHistory,
-  historyOpen,
 }: WeekRecordProps) {
   return (
     <section className="mb-4 rounded-2xl bg-[var(--surface)] px-4 py-4">

@@ -1,5 +1,5 @@
 import type { GameLog } from "./types";
-import { bdlHeaders, hasBdlKey, nbaSeasonYear } from "./bdl-client";
+import { bdlHeaders, hasBdlKey } from "./bdl-client";
 import { fetchJson } from "./fetch";
 import { getLast5Games } from "./stats";
 
@@ -30,7 +30,7 @@ export async function searchPlayer(name: string): Promise<BdlPlayer | null> {
 }
 
 /** BDL stats endpoint is not available on free tier (401) — use NBA stats */
-export async function getBdlLast5PlayoffGames(_playerName: string): Promise<GameLog[]> {
+export async function getBdlLast5PlayoffGames(): Promise<GameLog[]> {
   return [];
 }
 
