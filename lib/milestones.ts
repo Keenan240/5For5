@@ -77,6 +77,26 @@ export function formatMilestoneLabel(stat: StatCategory, threshold: number): str
   return `${threshold}+ ${abbrev[stat]}`;
 }
 
+/** Ladder index for a threshold (nearest at-or-below if not exact). */
+export function ladderIndex(stat: string, threshold: number): number {
+  const ladder = LADDERS[stat as StatCategory];
+  if (!ladder?.length) return 0;
+  const exact = ladder.indexOf(threshold);
+  if (exact >= 0) return exact;
+  let nearest = 0;
+  for (let i = 0; i < ladder.length; i++) {
+    if (ladder[i]! <= threshold) nearest = i;
+  }
+  return nearest;
+}
+
+/** 0 = floor rung, 1 = top of ladder. */
+export function ladderFraction(stat: string, threshold: number): number {
+  const ladder = LADDERS[stat as StatCategory];
+  if (!ladder || ladder.length <= 1) return 0;
+  return ladderIndex(stat, threshold) / (ladder.length - 1);
+}
+
 /**
  * How “close” a last-5 value is to the leg line (for color coding).
  * Tuned to typical ladder step size per category.

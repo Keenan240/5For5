@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Collapse } from "@/components/collapse";
 import { TeamLogo } from "@/components/team-logo";
 
 type SlateGame = { home: string; away: string; status: string };
@@ -12,6 +13,27 @@ type SlateGamesListProps = {
 
 const PREVIEW_COUNT = 3;
 const SKELETON_COUNT = 3;
+
+function GameRow({ g }: { g: SlateGame }) {
+  return (
+    <li className="flex items-center gap-3 px-2 py-2.5">
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        <TeamLogo abbrev={g.away} size={28} />
+        <span className="truncate text-sm font-semibold text-[var(--text)]">
+          {g.away}
+        </span>
+        <span className="shrink-0 text-xs text-[var(--text-subtle)]">@</span>
+        <TeamLogo abbrev={g.home} size={28} />
+        <span className="truncate text-sm font-semibold text-[var(--text)]">
+          {g.home}
+        </span>
+      </div>
+      <span className="shrink-0 text-sm font-semibold tabular-nums text-black">
+        {g.status}
+      </span>
+    </li>
+  );
+}
 
 function GameRowSkeleton({ delayMs }: { delayMs: number }) {
   return (
@@ -40,7 +62,8 @@ export function SlateGamesList({ games, loading }: SlateGamesListProps) {
       ? "No games available"
       : `${count} Game${count === 1 ? "" : "s"} Available`;
 
-  const visible = showAll ? games : games.slice(0, PREVIEW_COUNT);
+  const preview = games.slice(0, PREVIEW_COUNT);
+  const extra = games.slice(PREVIEW_COUNT);
   const remaining = Math.max(0, count - PREVIEW_COUNT);
   const canToggle = count > PREVIEW_COUNT;
 
@@ -74,30 +97,17 @@ export function SlateGamesList({ games, loading }: SlateGamesListProps) {
       ) : (
         <>
           <ul className="divide-y divide-[var(--border)]">
-            {visible.map((g) => (
-              <li
-                key={`${g.away}-${g.home}`}
-                className="flex items-center gap-3 px-2 py-2.5"
-              >
-                <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-                  <TeamLogo abbrev={g.away} size={28} />
-                  <span className="truncate text-sm font-semibold text-[var(--text)]">
-                    {g.away}
-                  </span>
-                  <span className="shrink-0 text-xs text-[var(--text-subtle)]">
-                    @
-                  </span>
-                  <TeamLogo abbrev={g.home} size={28} />
-                  <span className="truncate text-sm font-semibold text-[var(--text)]">
-                    {g.home}
-                  </span>
-                </div>
-                <span className="shrink-0 text-sm font-semibold tabular-nums text-black">
-                  {g.status}
-                </span>
-              </li>
+            {preview.map((g) => (
+              <GameRow key={`${g.away}-${g.home}`} g={g} />
             ))}
           </ul>
+          <Collapse open={showAll && extra.length > 0}>
+            <ul className="collapse-fade divide-y divide-[var(--border)] border-t border-[var(--border)]">
+              {extra.map((g) => (
+                <GameRow key={`${g.away}-${g.home}`} g={g} />
+              ))}
+            </ul>
+          </Collapse>
           {!showAll && remaining > 0 && (
             <p className="px-1 pt-2 text-center text-xs text-[var(--text-muted)]">
               {remaining} Additional Game{remaining === 1 ? "" : "s"}

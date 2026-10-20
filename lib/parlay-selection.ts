@@ -1,5 +1,7 @@
 import type { RankedPick } from "./discovery-progress";
+import { ladderFraction, ladderIndex, LADDERS } from "./milestones";
 import type { RiskPreference } from "./odds";
+import type { StatCategory } from "./types";
 import type { ParlayDraft, ParlayLeg } from "./types";
 
 export function legKey(p: {
@@ -11,7 +13,11 @@ export function legKey(p: {
 }
 
 /** One active leg per player per stat category (e.g. not 10+ and 15+ PTS). */
-export function playerStatKey(p: { player: string; stat: string }): string {
+export function playerStatKey(p: {
+  player: string;
+  team?: string;
+  stat: string;
+}): string {
   return `${p.player}|${p.stat}`;
 }
 
@@ -29,24 +35,119 @@ export function rankedToLeg(r: RankedPick): ParlayLeg {
   };
 }
 
+type RiskPickShape = {
+  stat: string;
+  threshold: number;
+  buffer: number;
+  odds: number;
+};
+
 /**
- * Among qualifying ladder rungs for one player|stat, pick by risk appetite.
- * LOW = safest floor, HIGH = juiciest (highest) line, MEDIUM = middle rung.
+ * Odds more negative than this aren't real FanDuel-style milestone markets
+ * (e.g. 5+ PTS on a 25 PPG scorer). Suggest 5 should avoid them.
  */
-export function pickThresholdForRisk(
-  thresholds: number[],
-  risk: RiskPreference
+export const PLAUSIBLE_ODDS_FLOOR = -1000;
+
+export function isPlausibleMarket(odds: number): boolean {
+  return odds > PLAUSIBLE_ODDS_FLOOR;
+}
+
+/** 0 = lowest available rung for this player|stat, 1 = their max 5/5. */
+function relativeFrac(
+  threshold: number,
+  available: number[]
 ): number {
-  const sorted = [...new Set(thresholds)].sort((a, b) => a - b);
-  if (sorted.length === 0) return 0;
-  if (risk === "LOW") return sorted[0]!;
-  if (risk === "HIGH") return sorted[sorted.length - 1]!;
-  return sorted[Math.floor((sorted.length - 1) / 2)]!;
+  const sorted = [...new Set(available)].sort((a, b) => a - b);
+  if (sorted.length <= 1) return 1;
+  const idx = sorted.indexOf(threshold);
+  if (idx < 0) return 0;
+  return idx / (sorted.length - 1);
+}
+
+function peakAround(value: number, target: number, width: number): number {
+  return Math.max(0, 1 - Math.abs(value - target) / width);
 }
 
 /**
- * Select top `count` legs. When risk is set, each player|stat uses the
- * risk-matched threshold before ranking — so Suggest 5 isn't stuck on the floor.
+ * How well a 5/5 milestone fits a risk appetite.
+ * Risk = payout aggressiveness among *plausible* lines (not fake -1200 locks).
+ * `availableThresholds` = all qualifying rungs for this player|stat.
+ */
+export function riskFitScore(
+  pick: RiskPickShape,
+  risk: RiskPreference,
+  availableThresholds?: number[]
+): number {
+  const available = availableThresholds?.length
+    ? availableThresholds
+    : [pick.threshold];
+  const rel = relativeFrac(pick.threshold, available);
+  const frac = ladderFraction(pick.stat, pick.threshold);
+  const buf = Math.max(pick.buffer, 0);
+  const odds = pick.odds;
+  const idx = ladderIndex(pick.stat, pick.threshold);
+
+  let score = 0;
+
+  if (risk === "LOW") {
+    // Safe but still a real line: a step or two under their max 5/5, not 5+ PTS.
+    // Target odds around -450 to -650.
+    const relTerm = peakAround(rel, 0.55, 0.45);
+    const oddsTerm = peakAround(odds, -550, 280);
+    const bufferTerm = Math.min(buf / 6, 1.2);
+    score = relTerm * 1.4 + oddsTerm * 1.2 + bufferTerm * 0.6;
+  } else if (risk === "MEDIUM") {
+    // Mid of their available ladder; odds near -300.
+    const relTerm = peakAround(rel, 0.7, 0.4);
+    const oddsTerm = peakAround(odds, -300, 200);
+    const bufferTerm = Math.min(buf / 5, 1) * (buf > 0.5 ? 1 : 0.5);
+    score = relTerm * 1.2 + oddsTerm * 1.2 + bufferTerm * 0.5;
+  } else {
+    // HIGH: near their max 5/5; odds near -200.
+    const relTerm = peakAround(rel, 1, 0.35);
+    const oddsTerm = peakAround(odds, -220, 180);
+    score = relTerm * 1.5 + oddsTerm * 1.3 + Math.min(buf / 4, 0.5);
+    if (idx <= 1) score *= 0.25;
+    const ladder = LADDERS[pick.stat as StatCategory];
+    if (ladder && pick.threshold === ladder[0]) score *= 0.4;
+  }
+
+  // Never prefer fake markets — even for "safe."
+  if (odds <= -1000) score *= 0.05;
+  else if (odds <= -800) score *= 0.35;
+  else if (odds <= -700 && risk !== "LOW") score *= 0.6;
+
+  // Absolute ladder floors with huge cushions are almost never bettable.
+  if (frac <= 0.15 && buf >= 8) score *= 0.2;
+
+  return score;
+}
+
+/**
+ * Among qualifying ladder rungs for one player|stat, pick by risk appetite.
+ */
+export function pickThresholdForRisk(
+  picks: RiskPickShape[],
+  risk: RiskPreference
+): number {
+  if (picks.length === 0) return 0;
+  const available = picks.map((p) => p.threshold);
+  let best = picks[0]!;
+  let bestScore = riskFitScore(best, risk, available);
+  for (let i = 1; i < picks.length; i++) {
+    const p = picks[i]!;
+    const s = riskFitScore(p, risk, available);
+    if (s > bestScore) {
+      best = p;
+      bestScore = s;
+    }
+  }
+  return best.threshold;
+}
+
+/**
+ * Select top `count` legs by risk fit (not global browse rank).
+ * Prefers plausible FanDuel-ish odds; only falls back to locks if needed to fill.
  */
 export function defaultSelectedRanked(
   ranked: RankedPick[],
@@ -65,26 +166,31 @@ export function defaultSelectedRanked(
     byPlayerStat.set(ps, list);
   }
 
-  const preferredKeys = new Set<string>();
+  const preferred: { pick: RankedPick; available: number[] }[] = [];
   for (const picks of byPlayerStat.values()) {
-    const chosen = pickThresholdForRisk(
-      picks.map((p) => p.threshold),
-      risk
-    );
+    const available = picks.map((p) => p.threshold);
+    const chosenTh = pickThresholdForRisk(picks, risk);
     const match =
-      picks.find((p) => p.threshold === chosen) ??
+      picks.find((p) => p.threshold === chosenTh) ??
       picks.slice().sort((a, b) => a.rank - b.rank)[0];
-    if (match) preferredKeys.add(legKey(match));
+    if (match) preferred.push({ pick: match, available });
   }
 
-  const preferred = ranked
-    .filter((r) => preferredKeys.has(legKey(r)))
-    .sort((a, b) => a.rank - b.rank);
+  preferred.sort((a, b) => {
+    const sa = riskFitScore(a.pick, risk, a.available);
+    const sb = riskFitScore(b.pick, risk, b.available);
+    return sb - sa;
+  });
+
+  // Prefer real markets first; fill with the rest only if slate is thin.
+  const plausible = preferred.filter((x) => isPlausibleMarket(x.pick.odds));
+  const implausible = preferred.filter((x) => !isPlausibleMarket(x.pick.odds));
+  const ordered = [...plausible, ...implausible];
 
   const selectedKeys = new Set<string>();
-  for (const r of preferred) {
+  for (const { pick } of ordered) {
     if (selectedKeys.size >= count) break;
-    selectedKeys.add(legKey(r));
+    selectedKeys.add(legKey(pick));
   }
 
   return ranked.map((r) => ({

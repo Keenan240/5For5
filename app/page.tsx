@@ -50,6 +50,7 @@ import { DiscoveryInfoModal } from "@/components/discovery-info-modal";
 import { WeekRecord } from "@/components/week-record";
 import { BottomNav, type AppTab } from "@/components/bottom-nav";
 import { ResultsView } from "@/components/results-view";
+import { Collapse } from "@/components/collapse";
 import { DateStrip } from "@/components/date-strip";
 import { SlateGamesList } from "@/components/slate-games-list";
 import {
@@ -181,6 +182,24 @@ export default function Home() {
   const progressEndRef = useRef<HTMLDivElement>(null);
   const viewDateRef = useRef(viewDate);
   viewDateRef.current = viewDate;
+  /**
+   * In-memory discovery cache per slate date. Survives day-to-day navigation
+   * so Retrieve stats isn't needed again; cleared on full page refresh / reset.
+   */
+  const discoveryCacheRef = useRef(
+    new Map<
+      string,
+      {
+        candidatePool: BrowseCandidate[];
+        rankedPicks: RankedPick[];
+        statsReady: boolean;
+        h2hMode: boolean;
+        oddsByLeg: Record<string, string>;
+        draftMeta: { date: string; confidence: ParlayDraft["confidence"] } | null;
+        riskPreference: RiskPreference | null;
+      }
+    >()
+  );
 
   function hydrateSettleLock(raw: SettleLockInfo | null | undefined) {
     if (!raw) return null;
@@ -440,17 +459,58 @@ export default function Home() {
     void fetchStatus();
   }, [fetchStatus]);
 
+  function saveDiscoveryForDate(date: string) {
+    if (!statsReady && candidatePool.length === 0 && rankedPicks.length === 0) {
+      return;
+    }
+    discoveryCacheRef.current.set(date, {
+      candidatePool,
+      rankedPicks,
+      statsReady: statsReady || candidatePool.length > 0,
+      h2hMode,
+      oddsByLeg,
+      draftMeta,
+      riskPreference,
+    });
+  }
+
+  function restoreDiscoveryForDate(date: string) {
+    const cached = discoveryCacheRef.current.get(date);
+    if (!cached) {
+      setCandidatePool([]);
+      setRankedPicks([]);
+      setStatsReady(false);
+      setDraftMeta(null);
+      setOddsByLeg({});
+      return;
+    }
+    setCandidatePool(cached.candidatePool);
+    setRankedPicks(cached.rankedPicks);
+    setStatsReady(cached.statsReady);
+    setH2hMode(cached.h2hMode);
+    setOddsByLeg(cached.oddsByLeg);
+    setDraftMeta(cached.draftMeta);
+    setRiskPreference(cached.riskPreference);
+    if (cached.riskPreference) {
+      riskPreferenceRef.current = cached.riskPreference;
+    }
+  }
+
   async function handleViewDateChange(ymd: string) {
     if (ymd === viewDate) return;
+    // Keep this night's scan so switching days doesn't re-hit ESPN/BDL.
+    saveDiscoveryForDate(viewDate);
+    createAbortRef.current?.abort();
+    createAbortRef.current = null;
+    setSuggesting(false);
+    setLoading(null);
     setViewDate(ymd);
     setSlateLoading(true);
-    setCandidatePool([]);
-    setRankedPicks([]);
-    setDraftMeta(null);
-    setOddsByLeg({});
     setPlaceError(null);
     setDeselectedGameKeys(new Set());
-    setStatsReady(false);
+    setProgressLines([]);
+    setScanProgress({ index: 0, total: 0 });
+    restoreDiscoveryForDate(ymd);
     // Clear stale games so we don't show yesterday's slate under today's label.
     setState((prev) =>
       prev?.slate
@@ -927,8 +987,36 @@ export default function Home() {
     setCandidatePool([]);
     setRankedPicks([]);
     setDraftMeta(null);
+    discoveryCacheRef.current.clear();
     await fetchStatus();
   }
+
+  // Keep cache in sync while editing so date switches restore the latest picks.
+  useEffect(() => {
+    if (loading === "create") return;
+    if (!statsReady && candidatePool.length === 0 && rankedPicks.length === 0) {
+      return;
+    }
+    discoveryCacheRef.current.set(viewDate, {
+      candidatePool,
+      rankedPicks,
+      statsReady: statsReady || candidatePool.length > 0,
+      h2hMode,
+      oddsByLeg,
+      draftMeta,
+      riskPreference,
+    });
+  }, [
+    viewDate,
+    candidatePool,
+    rankedPicks,
+    statsReady,
+    h2hMode,
+    oddsByLeg,
+    draftMeta,
+    riskPreference,
+    loading,
+  ]);
 
   async function handleBackfillHistoryRanked(historyIndex: number) {
     setLoading("backfill");
@@ -1276,7 +1364,9 @@ export default function Home() {
               ? scanProgress.total > 0
                 ? `Scanning ${scanProgress.index}/${scanProgress.total}…`
                 : "Retrieving…"
-              : "Retrieve stats"}
+              : statsReady
+                ? "Refresh stats"
+                : "Retrieve stats"}
           </button>
           <button
             type="button"
@@ -1392,7 +1482,9 @@ export default function Home() {
                 ? scanProgress.total > 0
                   ? `Scanning ${scanProgress.index}/${scanProgress.total}…`
                   : "Retrieving…"
-                : "Retrieve stats"}
+                : statsReady
+                  ? "Refresh stats"
+                  : "Retrieve stats"}
             </button>
             <button
               type="button"
@@ -1796,9 +1888,9 @@ function HistoryCard({
           Delete
         </button>
       </div>
-      {expanded && (
+      <Collapse open={expanded}>
         <div
-          className="border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--text-muted)]"
+          className="collapse-fade border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--text-muted)]"
           onTouchStart={(e) => e.stopPropagation()}
         >
           <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--text-faint)]">
@@ -1836,39 +1928,39 @@ function HistoryCard({
                 discovery (slate night excluded from last 5).
               </p>
             )}
-            {hasRankedResults && showRankedResults && (
-              <div className="mt-2 space-y-1">
-                  <p className="text-[var(--text)]">
-                    Ranked pool:{" "}
-                    <span className="text-green-400">{rankedHits}</span>/
-                    {rankedResults.length} hit
-                    {alternates.length > 0 && (
-                      <>
-                        {" "}
-                        · Alternates:{" "}
-                        <span className="text-green-400">
-                          {alternates.filter((r) => r.hit).length}
-                        </span>
-                        /{alternates.length}
-                      </>
-                    )}
+            <Collapse open={hasRankedResults && showRankedResults}>
+              <div className="collapse-fade mt-2 space-y-1">
+                <p className="text-[var(--text)]">
+                  Ranked pool:{" "}
+                  <span className="text-green-400">{rankedHits}</span>/
+                  {rankedResults.length} hit
+                  {alternates.length > 0 && (
+                    <>
+                      {" "}
+                      · Alternates:{" "}
+                      <span className="text-green-400">
+                        {alternates.filter((r) => r.hit).length}
+                      </span>
+                      /{alternates.length}
+                    </>
+                  )}
+                </p>
+                {alternates.map((row) => (
+                  <p
+                    key={`${row.rank}-${row.player}-${row.stat}-${row.threshold}`}
+                  >
+                    {row.hit ? "✅" : "❌"}{" "}
+                    <span className="text-[var(--text-faint)]">#{row.rank}</span>{" "}
+                    {row.player}{" "}
+                    {formatMilestoneLabel(row.stat, row.threshold)} →{" "}
+                    {row.actualValue}
                   </p>
-                  {alternates.map((row) => (
-                    <p
-                      key={`${row.rank}-${row.player}-${row.stat}-${row.threshold}`}
-                    >
-                      {row.hit ? "✅" : "❌"}{" "}
-                      <span className="text-[var(--text-faint)]">#{row.rank}</span>{" "}
-                      {row.player}{" "}
-                      {formatMilestoneLabel(row.stat, row.threshold)} →{" "}
-                      {row.actualValue}
-                    </p>
-                  ))}
+                ))}
               </div>
-            )}
+            </Collapse>
           </div>
         </div>
-      )}
+      </Collapse>
     </li>
   );
 }

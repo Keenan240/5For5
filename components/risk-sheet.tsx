@@ -17,17 +17,17 @@ const OPTIONS: {
   {
     risk: "LOW",
     title: "Low",
-    blurb: "Safe floors — consistent beaters, smaller payouts.",
+    blurb: "Safer real lines with smaller payouts.",
   },
   {
     risk: "MEDIUM",
     title: "Medium",
-    blurb: "Right in between low and high.",
+    blurb: "Balanced lines around -250 to -400.",
   },
   {
     risk: "HIGH",
     title: "High",
-    blurb: "Higher totals, closer to the floor — better odds.",
+    blurb: "Higher payout lines closer to -150 to -300.",
   },
 ];
 

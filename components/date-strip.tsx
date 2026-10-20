@@ -39,7 +39,6 @@ export function DateStrip({
         style={{
           scrollbarWidth: "none",
           msOverflowStyle: "none",
-          WebkitOverflowScrolling: "touch",
         }}
       >
         {dates.map((ymd) => {
@@ -51,6 +50,7 @@ export function DateStrip({
               disabled={disabled}
               onClick={() => onSelect(ymd)}
               title={formatDisplayDate(ymd)}
+              style={{ touchAction: "pan-x pinch-zoom" }}
               className={`shrink-0 rounded-full px-3.5 py-2 text-xs font-semibold transition-colors disabled:opacity-40 ${
                 active
                   ? "bg-[var(--text)] text-[var(--bg)]"

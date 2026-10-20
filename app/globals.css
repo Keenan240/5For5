@@ -87,9 +87,44 @@ body {
   }
 }
 
+.date-strip-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pinch-zoom;
+}
+
 .date-strip-scroll::-webkit-scrollbar,
 .sheet-scroll::-webkit-scrollbar {
   display: none;
+}
+
+/* Accordion / card expand — short, snappy */
+.collapse-root {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.collapse-root[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.collapse-fade {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.18s ease-out,
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.collapse-root[data-open="true"] .collapse-fade {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .sheet-scroll {

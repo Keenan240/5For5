@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { LADDERS, STAT_CATEGORIES, formatMilestoneLabel } from "@/lib/milestones";
 import type { StatCategory } from "@/lib/types";
+import { Collapse } from "@/components/collapse";
 import { PlayerLegCard } from "@/components/player-leg-card";
 import { legKey, playerStatKey } from "@/lib/parlay-selection";
 
@@ -78,34 +79,35 @@ export function SlateBrowser({
     return opts[0] ?? LADDERS[stat][0];
   };
 
-  const gamesWithPlayers = useMemo(() => {
-    if (!openStat) return [];
-    const ladder = LADDERS[openStat];
-    const present = new Set(
-      candidates.filter((c) => c.stat === openStat).map((c) => c.threshold)
-    );
-    const opts = ladder.filter((t) => present.has(t));
-    const thresholds = opts.length > 0 ? opts : ladder.slice(0, 5);
-    const chosen = thresholdByStat[openStat];
-    const th =
-      chosen != null && thresholds.includes(chosen)
-        ? chosen
-        : (thresholds[0] ?? ladder[0]);
-    const pool = candidates.filter(
-      (c) => c.stat === openStat && c.threshold === th
-    );
-    return games
-      .map((g) => {
-        const players = pool.filter((c) => {
-          const t = c.team.toUpperCase();
-          return (
-            t === g.home.toUpperCase() || t === g.away.toUpperCase()
-          );
-        });
-        return { game: g, players };
-      })
-      .filter((row) => row.players.length > 0);
-  }, [candidates, games, openStat, thresholdByStat]);
+  const gamesWithPlayersFor = useMemo(() => {
+    return (stat: StatCategory) => {
+      const ladder = LADDERS[stat];
+      const present = new Set(
+        candidates.filter((c) => c.stat === stat).map((c) => c.threshold)
+      );
+      const opts = ladder.filter((t) => present.has(t));
+      const thresholds = opts.length > 0 ? opts : ladder.slice(0, 5);
+      const chosen = thresholdByStat[stat];
+      const th =
+        chosen != null && thresholds.includes(chosen)
+          ? chosen
+          : (thresholds[0] ?? ladder[0]);
+      const pool = candidates.filter(
+        (c) => c.stat === stat && c.threshold === th
+      );
+      return games
+        .map((g) => {
+          const players = pool.filter((c) => {
+            const t = c.team.toUpperCase();
+            return (
+              t === g.home.toUpperCase() || t === g.away.toUpperCase()
+            );
+          });
+          return { game: g, players };
+        })
+        .filter((row) => row.players.length > 0);
+    };
+  }, [candidates, games, thresholdByStat]);
 
   return (
     <section className="mb-4 space-y-2">
@@ -120,6 +122,7 @@ export function SlateBrowser({
         const th = activeThreshold(stat);
         const thresholds = thresholdsFor(stat);
         const statCount = candidates.filter((c) => c.stat === stat).length;
+        const gamesWithPlayers = gamesWithPlayersFor(stat);
 
         return (
           <div
@@ -144,9 +147,12 @@ export function SlateBrowser({
               <Chevron open={expanded} />
             </button>
 
-            {expanded && (
-              <div className="mx-4 border-t border-[var(--border)] pb-3 pt-2">
-                <div className="mb-3 flex gap-1 overflow-x-auto rounded-xl bg-[var(--surface-muted)] p-1">
+            <Collapse open={expanded}>
+              <div className="collapse-fade mx-4 border-t border-[var(--border)] pb-3 pt-2">
+                <div
+                  className="mb-3 flex gap-1 overflow-x-auto rounded-xl bg-[var(--surface-muted)] p-1"
+                  style={{ touchAction: "pan-x pinch-zoom" }}
+                >
                   {thresholds.map((t) => {
                     const active = t === th;
                     return (
@@ -198,8 +204,8 @@ export function SlateBrowser({
                             </span>
                             <Chevron open={gameOpen} />
                           </button>
-                          {gameOpen && (
-                            <ul className="mb-2 divide-y divide-[var(--border)]">
+                          <Collapse open={gameOpen}>
+                            <ul className="collapse-fade mb-2 divide-y divide-[var(--border)]">
                               {players.map((c) => {
                                 const k = legKey(c);
                                 const selected = selectedKeys.has(k);
@@ -244,14 +250,14 @@ export function SlateBrowser({
                                 );
                               })}
                             </ul>
-                          )}
+                          </Collapse>
                         </li>
                       );
                     })}
                   </ul>
                 )}
               </div>
-            )}
+            </Collapse>
           </div>
         );
       })}
@@ -268,7 +274,7 @@ function Chevron({ open }: { open: boolean }) {
       fill="none"
       stroke="currentColor"
       strokeWidth="2"
-      className={`text-[var(--text-subtle)] transition-transform ${
+      className={`text-[var(--text-subtle)] transition-transform duration-200 ease-out ${
         open ? "rotate-90" : "rotate-0"
       }`}
       aria-hidden

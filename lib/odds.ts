@@ -1,5 +1,8 @@
 /** American odds helpers and stake tiers */
 
+import { ladderFraction, LADDERS } from "./milestones";
+import type { StatCategory } from "./types";
+
 export function impliedProb(odds: number): number {
   return odds < 0
     ? Math.abs(odds) / (Math.abs(odds) + 100)
@@ -55,25 +58,49 @@ export function isStakeTier(n: number): n is StakeTier {
 }
 
 /**
- * Estimate FanDuel-style milestone odds from buffer when API odds unavailable.
- * Bigger buffer → juicier (more negative) odds.
+ * Estimate FanDuel-style milestone odds when API odds unavailable.
+ * Higher ladder lines → juicier (less negative) payouts; fat buffers → heavier favorites.
+ */
+export function estimateOddsFromMilestone(
+  stat: string,
+  threshold: number,
+  buffer: number
+): number {
+  const frac = ladderFraction(stat, threshold);
+  // Floor locks ~-650; top-of-ladder ~-170 before buffer.
+  let american = -650 + Math.round(frac * 480);
+
+  const ladder = LADDERS[stat as StatCategory];
+  const idx = ladder ? ladder.indexOf(threshold) : -1;
+  const step =
+    ladder && idx > 0
+      ? ladder[idx]! - ladder[idx - 1]!
+      : ladder && ladder.length > 1
+        ? ladder[1]! - ladder[0]!
+        : Math.max(threshold, 1);
+  const relativeBuf = buffer / Math.max(threshold * 0.25, step, 1);
+
+  if (relativeBuf >= 3) american -= 350;
+  else if (relativeBuf >= 2) american -= 220;
+  else if (relativeBuf >= 1.2) american -= 120;
+  else if (relativeBuf >= 0.6) american -= 40;
+  else if (relativeBuf < 0.25) american += 60;
+
+  // Clamp to a FanDuel-ish milestone band (locks … soft juice).
+  return Math.max(-1200, Math.min(-110, american));
+}
+
+/**
+ * Prefer estimateOddsFromMilestone when threshold is known.
+ * Uses a mid-ladder assumption so buffer still shifts the line.
  */
 export function estimateOddsFromBuffer(buffer: number, stat: string): number {
-  const base =
-    stat === "Points"
-      ? -180
-      : stat === "Rebounds"
-        ? -200
-        : stat === "Assists"
-          ? -170
-          : -190;
-
-  if (buffer >= 8) return Math.min(base - 120, -450);
-  if (buffer >= 5) return Math.min(base - 60, -280);
-  if (buffer >= 3) return base;
-  if (buffer >= 1.5) return base + 40;
-  if (buffer >= 0.5) return base + 80;
-  return base + 120;
+  const ladder = LADDERS[stat as StatCategory];
+  const mid =
+    ladder && ladder.length
+      ? ladder[Math.floor((ladder.length - 1) / 2)]!
+      : 10;
+  return estimateOddsFromMilestone(stat, mid, buffer);
 }
 
 export function formatAmerican(odds: number): string {

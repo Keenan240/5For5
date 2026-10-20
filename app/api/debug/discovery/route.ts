@@ -6,7 +6,7 @@ import {
   discoverMilestone,
   extractStatValues,
 } from "@/lib/milestones";
-import { passesOddsCap, estimateOddsFromBuffer } from "@/lib/odds";
+import { passesOddsCap, estimateOddsFromMilestone } from "@/lib/odds";
 import type { StatCategory } from "@/lib/types";
 
 export async function GET() {
@@ -44,7 +44,7 @@ export async function GET() {
       if (threshold === null) continue;
       const buffer =
         values.reduce((s, v) => s + (v - threshold), 0) / values.length;
-      const odds = estimateOddsFromBuffer(buffer, stat);
+      const odds = estimateOddsFromMilestone(stat, threshold, buffer);
       allMilestones.push({
         player: p.player,
         team: p.team,

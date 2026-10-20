@@ -9,11 +9,12 @@ import {
   extractStatValues,
   averageBuffer,
   formatMilestoneLabel,
+  ladderFraction,
 } from "./milestones";
 
 import {
 
-  estimateOddsFromBuffer,
+  estimateOddsFromMilestone,
 
   combineParlayOdds,
 
@@ -328,14 +329,14 @@ function buildMilestoneHits(
     if (highest === null) continue;
     for (const threshold of thresholdsAtOrBelow(highest, LADDERS[stat])) {
       const buffer = averageBuffer(values, threshold);
-      const odds = estimateOddsFromBuffer(buffer, stat);
+      const odds = estimateOddsFromMilestone(stat, threshold, buffer);
       milestones.push({
         stat,
         threshold,
         last5: values,
         buffer,
         odds,
-        score: scoreLeg(buffer, odds, threshold),
+        score: scoreLeg(buffer, odds, threshold, stat),
         ...extra,
       });
     }
@@ -528,17 +529,21 @@ async function discoverFromRoster(
 
 
 
-function scoreLeg(buffer: number, odds: number, threshold: number): number {
-
+/**
+ * Browse / pool ranking — balances cushion, usable juice, and ladder height
+ * so floor locks (1+ 3PM) no longer dominate the list.
+ */
+function scoreLeg(
+  buffer: number,
+  odds: number,
+  threshold: number,
+  stat: string
+): number {
+  const frac = ladderFraction(stat, threshold);
+  const bufferScore = Math.min(Math.max(buffer, 0) / 6, 1);
   const oddsSweet =
-
-    odds <= -119 && odds >= -399 ? 1.2 : odds > -399 ? 0.9 : 0.7;
-
-  const relativeBuffer = threshold > 0 ? buffer / threshold : 0;
-  const bufferScore = Math.min(relativeBuffer, 1.5);
-
-  return bufferScore * oddsSweet;
-
+    odds <= -119 && odds >= -450 ? 1.15 : odds > -119 ? 0.95 : 0.75;
+  return (0.45 * bufferScore + 0.35 * frac + 0.2) * oddsSweet;
 }
 
 
