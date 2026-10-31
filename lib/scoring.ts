@@ -43,7 +43,7 @@ import {
 } from "./stats";
 
 import { gamesVsOpponent } from "./h2h";
-import { normalizeGameLogDate, slateDateCandidates } from "./dates";
+import { normalizeGameLogDate, slateNightExclusionDates } from "./dates";
 import { opponentForTeam, type GameMatchup } from "./slate-games";
 import { mapWithConcurrency } from "./concurrency";
 import { getEspnAthleteId } from "./espn";
@@ -377,7 +377,7 @@ async function evaluatePlayerH2h(
 
   let vsOpp = gamesVsOpponent(fullLogs, p.team, opponent);
   if (options.beforeSlateYmd) {
-    const skip = new Set(slateDateCandidates(options.beforeSlateYmd));
+    const skip = new Set(slateNightExclusionDates(options.beforeSlateYmd));
     vsOpp = vsOpp.filter((g) => !skip.has(normalizeGameLogDate(g.date)));
   }
 

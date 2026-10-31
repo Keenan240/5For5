@@ -15,6 +15,15 @@ export function slateDateCandidates(slateYmd: string): string[] {
   return [addDaysYmd(slateYmd, -1), slateYmd, addDaysYmd(slateYmd, 1)];
 }
 
+/**
+ * Dates to drop from last-5 / pre-lock discovery for a slate night.
+ * Slate day + next day (UTC / late tip spill) — not prior day.
+ * Yesterday's final box scores must still count in last-5.
+ */
+export function slateNightExclusionDates(slateYmd: string): string[] {
+  return [slateYmd, addDaysYmd(slateYmd, 1)];
+}
+
 /** YYYY-MM-DD → "May 17, 2025" (calendar date, no timezone shift). */
 export function formatDisplayDate(ymd: string): string {
   const match = ymd.match(/^(\d{4})-(\d{2})-(\d{2})/);

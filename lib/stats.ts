@@ -3,7 +3,7 @@ import {
   addDaysYmd,
   normalizeGameLogDate,
   pickBestSlateGame,
-  slateDateCandidates,
+  slateNightExclusionDates,
   type PickBestSlateGameOptions,
 } from "./dates";
 import {
@@ -203,7 +203,7 @@ function last5CacheKey(playerId: string, opts?: Last5GamesOptions): string {
 
 function isOnSlateNight(logDate: string, slateYmd: string): boolean {
   const ymd = normalizeGameLogDate(logDate);
-  return slateDateCandidates(slateYmd).includes(ymd);
+  return slateNightExclusionDates(slateYmd).includes(ymd);
 }
 
 /**
