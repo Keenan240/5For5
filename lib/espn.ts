@@ -19,10 +19,23 @@ const ESPN_HEADERS: HeadersInit = {
   Accept: "application/json",
 };
 
-/** ESPN uses end-year; try both conventions for reliability. */
-export function espnSeasonCandidates(): number[] {
-  const y = nbaSeasonYear();
-  return [...new Set([y + 1, y, y - 1])];
+/**
+ * ESPN gamelog `season` query uses the season END year
+ * (NBA 2026-27 → ESPN `season=2027`).
+ */
+export function espnCurrentSeasonEndYear(): number {
+  return nbaSeasonYear() + 1;
+}
+
+/**
+ * Season years to query on ESPN.
+ * Default: current end-year only (2026-27 regular season tracking).
+ * Pass `recent: true` for H2H / multi-year history (current + prior two).
+ */
+export function espnSeasonCandidates(opts?: { recent?: boolean }): number[] {
+  const end = espnCurrentSeasonEndYear();
+  if (!opts?.recent) return [end];
+  return [...new Set([end, end - 1, end - 2])];
 }
 
 function normalizeName(name: string): string {
@@ -218,15 +231,24 @@ async function fetchEspnGameLogsForSeason(
   }
 }
 
+export type EspnGameLogOpts = {
+  /**
+   * Include prior ESPN seasons (for H2H history). Default false — current
+   * season only so last-5 / discovery never pad with last year's box scores.
+   */
+  recentSeasons?: boolean;
+};
+
 export async function getEspnGameLogs(
   playerName: string,
   maxGames = 30,
-  knownAthleteId?: string
+  knownAthleteId?: string,
+  opts?: EspnGameLogOpts
 ): Promise<GameLog[]> {
   const athleteId = knownAthleteId || (await getEspnAthleteId(playerName));
   if (!athleteId) return [];
 
-  const seasons = espnSeasonCandidates();
+  const seasons = espnSeasonCandidates({ recent: opts?.recentSeasons === true });
   const byKey = new Map<string, GameLog>();
   const addBatch = (batch: GameLog[]) => {
     for (const g of batch) {
@@ -235,9 +257,9 @@ export async function getEspnGameLogs(
     }
   };
 
-  // Parallelize the two newest season years; only hit the third if still short.
+  // Current season is a single request; recent mode parallelizes then backfills.
   const primary = await Promise.all(
-    seasons.slice(0, 2).map((s) =>
+    seasons.slice(0, Math.min(2, seasons.length)).map((s) =>
       fetchEspnGameLogsForSeason(athleteId, s, maxGames)
     )
   );

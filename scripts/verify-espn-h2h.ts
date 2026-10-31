@@ -5,7 +5,9 @@ import { getEspnGameLogs } from "../lib/espn";
 import { gamesVsOpponent, splitVsOpponent } from "../lib/h2h";
 
 async function main() {
-  const logs = await getEspnGameLogs("Victor Wembanyama", 82);
+  const logs = await getEspnGameLogs("Victor Wembanyama", 82, undefined, {
+    recentSeasons: true,
+  });
   const { prior, series } = splitVsOpponent(logs, "SAS", "OKC");
   const vs = gamesVsOpponent(logs, "SAS", "OKC");
   console.log(

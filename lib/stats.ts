@@ -299,9 +299,13 @@ export async function getPlayerFullGameLogs(
 
   let logs: GameLog[] = [];
 
+  // Full logs feed H2H — allow prior seasons so vs-opponent history isn't empty
+  // early in the year. Last-5 discovery uses current season only (see getLast5Games).
+  const espnFullOpts = { recentSeasons: true as const };
+
   // Prefer ESPN on Vercel (NBA stats blocked) or when roster already has athlete id.
   if (espnAthleteId || process.env.VERCEL) {
-    logs = await getEspnGameLogs(playerName, 82, espnAthleteId);
+    logs = await getEspnGameLogs(playerName, 82, espnAthleteId, espnFullOpts);
     logs = officialNewestFirst(logs);
     if (logs.length > 0) {
       fullCache?.set(cacheKey, logs);
@@ -320,7 +324,12 @@ export async function getPlayerFullGameLogs(
     (logs.length > 0 && matchupRows < Math.min(5, logs.length));
 
   if (needsEspn) {
-    const espnLogs = await getEspnGameLogs(playerName, 82, espnAthleteId);
+    const espnLogs = await getEspnGameLogs(
+      playerName,
+      82,
+      espnAthleteId,
+      espnFullOpts
+    );
     if (espnLogs.length) {
       logs =
         logs.length === 0
@@ -356,9 +365,10 @@ export async function getLast5Games(
   let last5: GameLog[] = [];
 
   // Prefer ESPN when we already have the athlete id from roster (skips search + NBA).
+  // Current season only — never pad last-5 with prior-year box scores.
   // Pull a wider window so slate-night / edge filters still leave 5 official games.
   if (espnAthleteId || process.env.VERCEL) {
-    const espnLogs = await getEspnGameLogs(playerName, 15, espnAthleteId);
+    const espnLogs = await getEspnGameLogs(playerName, 25, espnAthleteId);
     last5 = takeLast5Official(espnLogs, opts);
     if (last5.length >= 5) {
       cache?.set(cacheKey, last5);
@@ -377,7 +387,7 @@ export async function getLast5Games(
   }
 
   if (last5.length < 5) {
-    const espnLogs = await getEspnGameLogs(playerName, 20, espnAthleteId);
+    const espnLogs = await getEspnGameLogs(playerName, 25, espnAthleteId);
     const fromEspn = takeLast5Official(espnLogs, opts);
     if (fromEspn.length >= last5.length) {
       last5 = fromEspn;

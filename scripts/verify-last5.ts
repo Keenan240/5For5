@@ -15,8 +15,12 @@ async function main() {
   const last5 = takeLast5Official(logs);
   assert.equal(last5.length, 5);
   const pts = last5.map((g) => g.pts);
-  // Newest-first StatMuse-style: 17, 17, 26, 13, 30
-  assert.deepEqual(pts, [30, 13, 26, 17, 17]);
+  // 2026-27 RS (chronological among newest 5): 32, 26, 29, 27, 27
+  assert.deepEqual(pts, [32, 26, 29, 27, 27]);
+  assert.ok(
+    last5.every((g) => g.date >= "2026-10-01"),
+    "last-5 must be 2026-27 regular season only"
+  );
 
   const viaApi = await getLast5Games(
     "Tyrese Maxey",
@@ -28,11 +32,15 @@ async function main() {
   );
   assert.deepEqual(
     viaApi.map((g) => g.pts),
-    [30, 13, 26, 17, 17]
+    [32, 26, 29, 27, 27]
   );
   assert.ok(
     viaApi.every((g) => g.seasonType !== undefined),
     "last-5 rows should carry seasonType"
+  );
+  assert.ok(
+    viaApi.every((g) => g.date >= "2026-10-01"),
+    "API last-5 must not include prior seasons"
   );
 
   console.log("verify-last5: Maxey last5 OK", {
