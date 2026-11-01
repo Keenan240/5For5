@@ -11,7 +11,7 @@ import {
   getEspnGameLogs,
   getLatestGameStatFromEspn,
 } from "./espn";
-import { nbaSeasonYear } from "./bdl-client";
+import { currentSeasonStartYmd, nbaSeasonYear } from "./bdl-client";
 import { looksLikeMatchup } from "./h2h";
 import { STAT_KEY } from "./milestones";
 import { cachedFetch, SETTLE_POLL_CACHE_MS } from "./stats-cache";
@@ -154,7 +154,7 @@ async function fetchGameLogsForType(
 
 async function fetchAllGameLogs(playerId: string): Promise<GameLog[]> {
   // v3: never mix Preseason into discovery last-5 (NBA API path is RS+PO only).
-  const cacheKey = `nba-logs:v3:${playerId}`;
+  const cacheKey = `nba-logs:v4:${nbaSeasonYear()}:${playerId}`;
   return cachedFetch(
     cacheKey,
     async () => {
@@ -193,12 +193,19 @@ export type PlayerLogCache = Map<string, GameLog[]>;
 export type PlayerFullLogCache = Map<string, GameLog[]>;
 
 export type Last5GamesOptions = {
-  /** Omit games on the slate calendar night (±1 day) — pre-lock discovery / history. */
+  /** Omit games on the slate calendar night — pre-lock discovery / history. */
   beforeSlateYmd?: string;
+  /**
+   * Default true for last-5. Set false for H2H full logs that need prior seasons.
+   */
+  currentSeasonOnly?: boolean;
 };
 
 function last5CacheKey(playerId: string, opts?: Last5GamesOptions): string {
-  return opts?.beforeSlateYmd ? `${playerId}:pre:${opts.beforeSlateYmd}` : playerId;
+  const season = nbaSeasonYear();
+  return opts?.beforeSlateYmd
+    ? `${season}:${playerId}:pre:${opts.beforeSlateYmd}`
+    : `${season}:${playerId}`;
 }
 
 function isOnSlateNight(logDate: string, slateYmd: string): boolean {
@@ -215,6 +222,14 @@ export function isOfficialNbaGame(g: GameLog): boolean {
   return g.seasonType === "Regular Season" || g.seasonType === "Playoffs";
 }
 
+/** Keep only games from the active season (drops prior-year RS/playoffs). */
+export function currentSeasonGameLogs(logs: GameLog[]): GameLog[] {
+  const floor = currentSeasonStartYmd();
+  return officialGameLogs(logs).filter(
+    (g) => normalizeGameLogDate(g.date) >= floor
+  );
+}
+
 export function officialGameLogs(logs: GameLog[]): GameLog[] {
   return logs.filter(isOfficialNbaGame);
 }
@@ -224,7 +239,10 @@ function officialNewestFirst(
   logs: GameLog[],
   opts?: Last5GamesOptions
 ): GameLog[] {
-  let next = officialGameLogs(logs);
+  // Default: active season only so last-5 cannot show prior-year playoff lines
+  // when ESPN season year / NBA_SEASON is wrong. H2H passes currentSeasonOnly:false.
+  const currentOnly = opts?.currentSeasonOnly !== false;
+  let next = currentOnly ? currentSeasonGameLogs(logs) : officialGameLogs(logs);
   if (opts?.beforeSlateYmd) {
     next = next.filter((g) => !isOnSlateNight(g.date, opts.beforeSlateYmd!));
   }
@@ -238,7 +256,12 @@ export function takeLast5Official(
   logs: GameLog[],
   opts?: Last5GamesOptions
 ): GameLog[] {
-  return officialNewestFirst(logs, opts).slice(0, 5).reverse();
+  return officialNewestFirst(logs, {
+    ...opts,
+    currentSeasonOnly: opts?.currentSeasonOnly !== false,
+  })
+    .slice(0, 5)
+    .reverse();
 }
 
 async function fetchLast5FromNba(
@@ -303,10 +326,12 @@ export async function getPlayerFullGameLogs(
   // early in the year. Last-5 discovery uses current season only (see getLast5Games).
   const espnFullOpts = { recentSeasons: true as const };
 
+  const fullSortOpts: Last5GamesOptions = { currentSeasonOnly: false };
+
   // Prefer ESPN on Vercel (NBA stats blocked) or when roster already has athlete id.
   if (espnAthleteId || process.env.VERCEL) {
     logs = await getEspnGameLogs(playerName, 82, espnAthleteId, espnFullOpts);
-    logs = officialNewestFirst(logs);
+    logs = officialNewestFirst(logs, fullSortOpts);
     if (logs.length > 0) {
       fullCache?.set(cacheKey, logs);
       return logs;
@@ -338,7 +363,7 @@ export async function getPlayerFullGameLogs(
     }
   }
 
-  logs = officialNewestFirst(logs);
+  logs = officialNewestFirst(logs, fullSortOpts);
   if (fullCache) fullCache.set(cacheKey, logs);
   return logs;
 }

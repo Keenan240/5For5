@@ -1,5 +1,10 @@
 import { getSessionUser, isGoogleAuthConfigured } from "@/lib/auth-user";
+import {
+  currentSeasonStartYmd,
+  nbaSeasonYear,
+} from "@/lib/bdl-client";
 import { addDaysYmd } from "@/lib/dates";
+import { espnCurrentSeasonEndYear } from "@/lib/espn";
 import { reconcileBankroll } from "@/lib/history";
 import { getState, setState, storageMode } from "@/lib/kv";
 import { enrichPendingEspnIds } from "@/lib/pending";
@@ -288,6 +293,13 @@ export async function GET(request: Request) {
     account,
     qualifiedCount: null,
     sliderMax: 8,
+    season: {
+      startYear: nbaSeasonYear(),
+      label: `${nbaSeasonYear()}-${String(nbaSeasonYear() + 1).slice(-2)}`,
+      espnSeason: espnCurrentSeasonEndYear(),
+      gameLogFloor: currentSeasonStartYmd(),
+      envNbaSeason: process.env.NBA_SEASON ?? null,
+    },
     slate: {
       date: slate.date,
       games: slate.games,

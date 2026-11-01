@@ -28,15 +28,26 @@ export function nbaSeasonYearForDate(ymd: string): number {
   return m >= 10 ? y : y - 1;
 }
 
-/** Current / configured season start year (2026 = 2026-27). */
+/**
+ * Current / configured season start year (2026 = 2026-27).
+ * `NBA_SEASON` may pin forward for testing, but must never lag the live
+ * calendar season (a stale Vercel env was serving 2025-26 playoff logs).
+ */
 export function nbaSeasonYear(): number {
-  if (process.env.NBA_SEASON) {
-    return parseInt(process.env.NBA_SEASON, 10);
-  }
   const today = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
   }).format(new Date());
-  return nbaSeasonYearForDate(today);
+  const fromDate = nbaSeasonYearForDate(today);
+  if (process.env.NBA_SEASON) {
+    const fromEnv = parseInt(process.env.NBA_SEASON, 10);
+    if (Number.isFinite(fromEnv)) return Math.max(fromEnv, fromDate);
+  }
+  return fromDate;
+}
+
+/** Approx tip-off floor for the current season (drops prior-year box scores). */
+export function currentSeasonStartYmd(): string {
+  return `${nbaSeasonYear()}-10-01`;
 }
 
 /** Season years to try against BallDontLie (date-derived ±1, plus env). */
