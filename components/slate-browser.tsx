@@ -31,6 +31,8 @@ type SlateBrowserProps = {
   onToggle: (c: BrowseCandidate) => void;
   disabled?: boolean;
   scanning?: boolean;
+  /** Research mode: show milestone label instead of Add/place controls. */
+  browseOnly?: boolean;
 };
 
 function gameLabel(g: SlateGame): string {
@@ -54,6 +56,7 @@ export function SlateBrowser({
   onToggle,
   disabled,
   scanning,
+  browseOnly,
 }: SlateBrowserProps) {
   const [openStat, setOpenStat] = useState<StatCategory | null>("Points");
   const [thresholdByStat, setThresholdByStat] = useState<
@@ -224,26 +227,35 @@ export function SlateBrowser({
                                       threshold={c.threshold}
                                       stat={c.stat}
                                       action={
-                                        <button
-                                          type="button"
-                                          disabled={
-                                            disabled ||
-                                            (!selected && !canAdd)
-                                          }
-                                          title={
-                                            categoryTaken
-                                              ? "Already added in this category"
-                                              : undefined
-                                          }
-                                          onClick={() => onToggle(c)}
-                                          className={`rounded-full px-3.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 ${
-                                            selected
-                                              ? "bg-black text-white"
-                                              : "border border-[var(--border-strong)] bg-white text-[var(--text)]"
-                                          }`}
-                                        >
-                                          {selected ? "Added" : "Add"}
-                                        </button>
+                                        browseOnly ? (
+                                          <span className="rounded-full bg-[var(--surface-muted)] px-3 py-1.5 text-[12px] font-semibold text-[var(--text)]">
+                                            {formatMilestoneLabel(
+                                              c.stat,
+                                              c.threshold
+                                            )}
+                                          </span>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            disabled={
+                                              disabled ||
+                                              (!selected && !canAdd)
+                                            }
+                                            title={
+                                              categoryTaken
+                                                ? "Already added in this category"
+                                                : undefined
+                                            }
+                                            onClick={() => onToggle(c)}
+                                            className={`rounded-full px-3.5 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-40 ${
+                                              selected
+                                                ? "bg-black text-white"
+                                                : "border border-[var(--border-strong)] bg-white text-[var(--text)]"
+                                            }`}
+                                          >
+                                            {selected ? "Added" : "Add"}
+                                          </button>
+                                        )
                                       }
                                     />
                                   </li>

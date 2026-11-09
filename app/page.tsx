@@ -48,6 +48,8 @@ import {
 } from "@/components/parlay-flow-status";
 import { DiscoveryInfoModal } from "@/components/discovery-info-modal";
 import { WeekRecord } from "@/components/week-record";
+import { StreakTracker } from "@/components/streak-tracker";
+import { SuggestBoard } from "@/components/suggest-board";
 import { BottomNav, type AppTab } from "@/components/bottom-nav";
 import { ResultsView } from "@/components/results-view";
 import { Collapse } from "@/components/collapse";
@@ -61,6 +63,7 @@ import { ParlaySheet } from "@/components/parlay-sheet";
 import { PlayerAvatar } from "@/components/player-avatar";
 import { RiskSheet } from "@/components/risk-sheet";
 import { formatDisplayDate, getTodayEastern } from "@/lib/dates";
+import { RESEARCH_MODE } from "@/lib/features";
 import { hasSlipForDate, pendingForDate } from "@/lib/pending";
 import { buildWeekRecord, upcomingSlateDates } from "@/lib/week-record";
 import { gameKey } from "@/lib/slate-games";
@@ -368,6 +371,12 @@ export default function Home() {
     setRiskPreference(risk);
     riskPreferenceRef.current = risk;
     setStake(stakeTierForRisk(risk));
+    if (RESEARCH_MODE) {
+      setAppTab("suggest");
+      // Fill shared discovery pool; SuggestBoard builds per-stat boards (no place).
+      void handleCreate({ suggestTop5: false });
+      return;
+    }
     void handleCreate({ suggestTop5: true });
   }
 
@@ -1101,14 +1110,16 @@ export default function Home() {
     }));
   }, [candidatePool, rankedPicks]);
 
-  const showBrowser =
-    statsReady &&
-    browsePool.length > 0 &&
-    !viewPending &&
-    !viewHasSlip &&
-    loading !== "place";
+  const showBrowser = RESEARCH_MODE
+    ? statsReady && browsePool.length > 0 && loading !== "place"
+    : statsReady &&
+      browsePool.length > 0 &&
+      !viewPending &&
+      !viewHasSlip &&
+      loading !== "place";
 
   const needsAuthGate =
+    !RESEARCH_MODE &&
     !booting &&
     Boolean(state?.account?.authEnabled) &&
     !state?.account?.signedIn;
@@ -1133,6 +1144,7 @@ export default function Home() {
       )}
     <main
       className={`mx-auto max-w-md px-4 pt-6 transition-opacity duration-500 ${
+        !RESEARCH_MODE &&
         appTab === "home" &&
         (selectedCount > 0 || suggesting) &&
         !viewPending
@@ -1144,21 +1156,51 @@ export default function Home() {
         <h1 className="text-lg font-semibold tracking-tight text-[var(--text)]">
           {appTab === "home"
             ? "5For5"
-            : appTab === "community"
-              ? "Community"
-              : "Results"}
+            : appTab === "streaks"
+              ? "Streaks"
+              : appTab === "suggest"
+                ? "Suggest"
+                : appTab === "community"
+                  ? "Community"
+                  : "Results"}
         </h1>
-        <AuthButton authEnabled={state?.account?.authEnabled !== false} />
+        {!RESEARCH_MODE && (
+          <AuthButton authEnabled={state?.account?.authEnabled !== false} />
+        )}
       </header>
 
-      {appTab === "community" && (
+      {/* Mount on boot so streak scan starts with the app, not when opening the tab. */}
+      {RESEARCH_MODE && (
+        <div className={appTab === "streaks" ? "contents" : "hidden"}>
+          <StreakTracker />
+        </div>
+      )}
+
+      {appTab === "suggest" && RESEARCH_MODE && (
+        <SuggestBoard
+          candidates={browsePool}
+          risk={riskPreference ?? riskPreferenceRef.current}
+          onRiskChange={(next) => {
+            setRiskPreference(next);
+            riskPreferenceRef.current = next;
+          }}
+          scanning={loading === "create"}
+          statsReady={statsReady}
+          onRefresh={() => {
+            void handleCreate({ suggestTop5: false });
+          }}
+          games={state?.slate?.games ?? []}
+        />
+      )}
+
+      {!RESEARCH_MODE && appTab === "community" && (
         <LeaderboardView
           signedIn={Boolean(state?.account?.signedIn)}
           authEnabled={state?.account?.authEnabled !== false}
         />
       )}
 
-      {appTab === "results" && (
+      {!RESEARCH_MODE && appTab === "results" && (
         <ResultsView
           net={state?.bankroll ?? 0}
           history={historyNewestFirst}
@@ -1268,18 +1310,20 @@ export default function Home() {
 
       {appTab === "home" && (
         <>
-      <WeekRecord
-        days={weekDays}
-        lifetime={parlayRecord}
-        onOpenHistory={
-          historyNewestFirst.length > 0
-            ? () => {
-                setAppTab("results");
-                setHistoryVisibleCount(Math.max(historyVisibleCount, 5));
-              }
-            : undefined
-        }
-      />
+      {!RESEARCH_MODE && (
+        <WeekRecord
+          days={weekDays}
+          lifetime={parlayRecord}
+          onOpenHistory={
+            historyNewestFirst.length > 0
+              ? () => {
+                  setAppTab("results");
+                  setHistoryVisibleCount(Math.max(historyVisibleCount, 5));
+                }
+              : undefined
+          }
+        />
+      )}
 
       <DateStrip
         dates={slateDates}
@@ -1306,7 +1350,7 @@ export default function Home() {
         loading={slateLoading || (booting && !state?.slate)}
       />
 
-      {!viewPending && !viewHasSlip && !showBrowser && (
+      {(RESEARCH_MODE || (!viewPending && !viewHasSlip)) && !showBrowser && (
         <div className="relative mb-3 flex gap-2">
           {createOptsOpen && (
             <>
@@ -1406,6 +1450,7 @@ export default function Home() {
           onToggle={toggleBrowseCandidate}
           disabled={!!loading}
           scanning={loading === "create"}
+          browseOnly={RESEARCH_MODE}
         />
       )}
 
@@ -1457,6 +1502,7 @@ export default function Home() {
               </div>
             </>
           )}
+          {!RESEARCH_MODE && (
           <button
             type="button"
             onClick={() => setRiskSheetOpen(true)}
@@ -1471,12 +1517,17 @@ export default function Home() {
                   : "Building…"
                 : "Suggest 5"}
           </button>
+          )}
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => void handleCreate({ suggestTop5: false })}
               disabled={!!loading}
-              className="flex min-h-12 flex-1 items-center justify-center rounded-full border border-[var(--border-strong)] bg-white px-5 py-3 text-sm font-semibold text-[var(--text)] disabled:opacity-40"
+              className={`flex min-h-12 flex-1 items-center justify-center rounded-full px-5 py-3 text-sm font-semibold disabled:opacity-40 ${
+                RESEARCH_MODE
+                  ? "bg-black text-white"
+                  : "border border-[var(--border-strong)] bg-white text-[var(--text)]"
+              }`}
             >
               {loading === "create" && !suggesting
                 ? scanProgress.total > 0
@@ -1492,8 +1543,12 @@ export default function Home() {
               disabled={!!loading}
               aria-expanded={createOptsOpen}
               aria-label="Discovery options"
-              className={`relative flex min-h-12 min-w-12 items-center justify-center rounded-full border border-[var(--border-strong)] bg-white text-[var(--text)] disabled:opacity-40 ${
-                createOptsOpen ? "ring-2 ring-black/20" : ""
+              className={`relative flex min-h-12 min-w-12 items-center justify-center rounded-full disabled:opacity-40 ${
+                RESEARCH_MODE
+                  ? `bg-black text-white ${createOptsOpen ? "ring-2 ring-black/30" : ""}`
+                  : `border border-[var(--border-strong)] bg-white text-[var(--text)] ${
+                      createOptsOpen ? "ring-2 ring-black/20" : ""
+                    }`
               }`}
             >
               <svg
@@ -1515,7 +1570,10 @@ export default function Home() {
         </div>
       )}
 
-      {!viewPending && !viewHasSlip && (suggesting || selectedCount > 0) && (
+      {!RESEARCH_MODE &&
+        !viewPending &&
+        !viewHasSlip &&
+        (suggesting || selectedCount > 0) && (
         <ParlaySheet
           picks={selectedPicks}
           maxLegs={PARLAY_LEG_COUNT}
@@ -1535,9 +1593,11 @@ export default function Home() {
         />
       )}
 
-      <ParlayFlowStatus phase={loading === "settle" ? "settle" : null} />
+      {!RESEARCH_MODE && (
+        <ParlayFlowStatus phase={loading === "settle" ? "settle" : null} />
+      )}
 
-      {viewPending && (
+      {!RESEARCH_MODE && viewPending && (
         <div
           key={`${viewPending.date}-${viewPending.stake}-${viewPending.parlayOdds}`}
           className="parlay-pending-frame mb-4"
@@ -1580,14 +1640,16 @@ export default function Home() {
         </div>
       )}
 
-      {!viewPending && viewHasSlip && (
+      {!RESEARCH_MODE && !viewPending && viewHasSlip && (
         <p className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--bg-inset)] px-4 py-3 text-sm text-[var(--text-muted)]">
           Slip already settled for {formatDisplayDate(viewDate)}. Pick another
           night to build a new one.
         </p>
       )}
 
-      <ParlayFlowStatus phase={loading === "place" ? "place" : null} />
+      {!RESEARCH_MODE && (
+        <ParlayFlowStatus phase={loading === "place" ? "place" : null} />
+      )}
 
       {progressLines.length > 0 && (
         <CollapsiblePanel
@@ -1642,11 +1704,13 @@ export default function Home() {
 
     </main>
       <BottomNav tab={appTab} onChange={setAppTab} />
-      <RiskSheet
-        open={riskSheetOpen}
-        onClose={() => setRiskSheetOpen(false)}
-        onPick={startSuggestWithRisk}
-      />
+      {!RESEARCH_MODE && (
+        <RiskSheet
+          open={riskSheetOpen}
+          onClose={() => setRiskSheetOpen(false)}
+          onPick={startSuggestWithRisk}
+        />
+      )}
       <DiscoveryInfoModal
         open={discoveryInfoOpen}
         onClose={() => setDiscoveryInfoOpen(false)}

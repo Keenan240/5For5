@@ -1,5 +1,10 @@
 import type { RankedPick } from "./discovery-progress";
-import { ladderFraction, ladderIndex, LADDERS } from "./milestones";
+import {
+  ladderFraction,
+  ladderIndex,
+  LADDERS,
+  STAT_CATEGORIES,
+} from "./milestones";
 import type { RiskPreference } from "./odds";
 import type { StatCategory } from "./types";
 import type { ParlayDraft, ParlayLeg } from "./types";
@@ -232,4 +237,105 @@ export function toggleRankedSelection(
   }
 
   return ranked.map((r) => (r.rank === rank ? { ...r, selected: true } : r));
+}
+
+export type BrowseLike = {
+  player: string;
+  team: string;
+  stat: StatCategory;
+  threshold: number;
+  last5: number[];
+  score: number;
+  odds: number;
+  buffer: number;
+  espnAthleteId?: string;
+};
+
+/**
+ * One 5-leg board per stat category, risk-tuned among that stat's candidates.
+ */
+export function buildStatBoards(
+  candidates: BrowseLike[],
+  risk: RiskPreference = "LOW",
+  legsPerBoard = 5
+): Record<StatCategory, RankedPick[]> {
+  const boards = {} as Record<StatCategory, RankedPick[]>;
+
+  for (const stat of STAT_CATEGORIES) {
+    const pool = candidates.filter((c) => c.stat === stat);
+    const ranked: RankedPick[] = pool
+      .slice()
+      .sort((a, b) => b.score - a.score)
+      .map((c, i) => ({
+        rank: i + 1,
+        player: c.player,
+        team: c.team,
+        stat: c.stat,
+        threshold: c.threshold,
+        last5: c.last5,
+        buffer: c.buffer,
+        odds: c.odds,
+        score: c.score,
+        selected: false,
+        espnAthleteId: c.espnAthleteId,
+      }));
+
+    const withSelection = defaultSelectedRanked(ranked, legsPerBoard, risk);
+    boards[stat] = withSelection
+      .filter((r) => r.selected)
+      .sort((a, b) => a.rank - b.rank)
+      .map((r, i) => ({ ...r, rank: i + 1, selected: true }));
+  }
+
+  return boards;
+}
+
+/** Candidates for a stat not already on the board (by player). */
+export function swapCandidatesForStat(
+  pool: BrowseLike[],
+  stat: StatCategory,
+  board: RankedPick[],
+  risk: RiskPreference = "MEDIUM"
+): RankedPick[] {
+  const onBoard = new Set(board.map((l) => l.player));
+  const eligible = pool.filter(
+    (c) => c.stat === stat && !onBoard.has(c.player)
+  );
+
+  const byPlayerStat = new Map<string, BrowseLike[]>();
+  for (const c of eligible) {
+    const ps = playerStatKey(c);
+    const list = byPlayerStat.get(ps) ?? [];
+    list.push(c);
+    byPlayerStat.set(ps, list);
+  }
+
+  const preferred: RankedPick[] = [];
+  for (const picks of byPlayerStat.values()) {
+    const chosenTh = pickThresholdForRisk(picks, risk);
+    const match =
+      picks.find((p) => p.threshold === chosenTh) ??
+      picks.slice().sort((a, b) => b.score - a.score)[0];
+    if (!match) continue;
+    preferred.push({
+      rank: 0,
+      player: match.player,
+      team: match.team,
+      stat: match.stat,
+      threshold: match.threshold,
+      last5: match.last5,
+      buffer: match.buffer,
+      odds: match.odds,
+      score: match.score,
+      selected: false,
+      espnAthleteId: match.espnAthleteId,
+    });
+  }
+
+  preferred.sort((a, b) => {
+    const available = [a.threshold];
+    return riskFitScore(b, risk, available) - riskFitScore(a, risk, available);
+  });
+
+  return preferred.map((r, i) => ({ ...r, rank: i + 1 }));
 }
