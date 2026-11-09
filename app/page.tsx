@@ -1119,7 +1119,6 @@ export default function Home() {
       loading !== "place";
 
   const needsAuthGate =
-    !RESEARCH_MODE &&
     !booting &&
     Boolean(state?.account?.authEnabled) &&
     !state?.account?.signedIn;
@@ -1164,9 +1163,7 @@ export default function Home() {
                   ? "Community"
                   : "Results"}
         </h1>
-        {!RESEARCH_MODE && (
-          <AuthButton authEnabled={state?.account?.authEnabled !== false} />
-        )}
+        <AuthButton authEnabled={state?.account?.authEnabled !== false} />
       </header>
 
       {/* Mount on boot so streak scan starts with the app, not when opening the tab. */}
